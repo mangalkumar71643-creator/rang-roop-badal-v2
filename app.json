@@ -1,0 +1,84 @@
+{
+  "expo": {
+    "name": "Rang Roop Badal",
+    "slug": "rang-roop-badal",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "icon": "./assets/images/icon.png",
+    "scheme": "rangroopbadal",
+    "userInterfaceStyle": "dark",
+    "newArchEnabled": true,
+    "splash": {
+      "image": "./assets/images/icon.png",
+      "resizeMode": "contain",
+      "backgroundColor": "#070714"
+    },
+    "ios": {
+      "supportsTablet": false,
+      "bundleIdentifier": "com.rangroopbadal.game",
+      "infoPlist": {
+        "UIRequiresFullScreen": true
+      }
+    },
+    "android": {
+      "package": "com.rangroopbadal.game",
+      "versionCode": 5,
+      "compileSdkVersion": 35,
+      "targetSdkVersion": 35,
+      "minSdkVersion": 24,
+      "adaptiveIcon": {
+        "foregroundImage": "./assets/images/icon.png",
+        "backgroundColor": "#070714"
+      },
+      "permissions": [
+        "android.permission.VIBRATE"
+      ],
+      "blockedPermissions": [
+        "android.permission.READ_EXTERNAL_STORAGE",
+        "android.permission.WRITE_EXTERNAL_STORAGE",
+        "android.permission.RECORD_AUDIO",
+        "android.permission.CAMERA",
+        "android.permission.ACCESS_FINE_LOCATION",
+        "android.permission.ACCESS_COARSE_LOCATION"
+      ]
+    },
+    "web": {
+      "favicon": "./assets/images/icon.png",
+      "bundler": "metro"
+    },
+    "plugins": [
+      [
+        "expo-router",
+        {
+          "origin": "https://replit.com/"
+        }
+      ],
+      "expo-font",
+      "expo-web-browser",
+      [
+        "expo-splash-screen",
+        {
+          "backgroundColor": "#070714",
+          "image": "./assets/images/icon.png",
+          "imageWidth": 200
+        }
+      ],
+      [
+        "react-native-google-mobile-ads",
+        {
+          "androidAppId": "ca-app-pub-3940256099942544~3347511713"
+        }
+      ]
+    ],
+    "experiments": {
+      "typedRoutes": true,
+      "reactCompiler": true
+    },
+    "extra": {
+      "eas": {
+        "projectId": "f22e9e32-c1ff-429d-96d8-e82e667508fe"
+      }
+    },
+    "owner": "mangalkumar6494"
+  }
+}
