@@ -532,23 +532,8 @@ export default function SnakeShiftScreen() {
       const ddy = cy - last.y;
       const moveDist = Math.sqrt(ddx * ddx + ddy * ddy);
       if (moveDist > 4) {
-        // If boost is already active — just steer, never cancel boost on movement
-        if (worldRef.current.player.isBoost) {
-          steer(Math.atan2(ddy, ddx));
-          lastTouchRef.current = { x: cx, y: cy };
-          return;
-        }
-        // Boost not yet active — cancel pending timer only on intentional swipe (>12px total)
-        if (!isSteering.current) {
-          const grant = grantTouchRef.current;
-          const totalDx = grant ? cx - grant.x : ddx;
-          const totalDy = grant ? cy - grant.y : ddy;
-          const totalDist = Math.sqrt(totalDx * totalDx + totalDy * totalDy);
-          if (totalDist > 12) {
-            isSteering.current = true;
-            if (holdTimerRef.current) { clearTimeout(holdTimerRef.current); holdTimerRef.current = null; }
-          }
-        }
+        // Movement NEVER cancels boost or its pending timer — only finger release does.
+        // This lets the player hold + steer simultaneously.
         steer(Math.atan2(ddy, ddx));
         lastTouchRef.current = { x: cx, y: cy };
       }
