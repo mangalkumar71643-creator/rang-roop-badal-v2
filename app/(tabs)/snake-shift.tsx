@@ -40,16 +40,17 @@ const MAX_SEGS       = BASE_SEGS + 5 * SEGS_PER_TYPE; // 5 shape types max
 const TRAIL_SEGS     = 7;
 
 // ─── Speed ───────────────────────────────────────────────────────────────────
-const NORMAL_SPEED = 2.5;   // ~34 % slower than before — relaxed, controllable
-const BOOST_SPEED  = 7.5;   // exactly 3×, hold-only
-const SPEED_LERP   = 0.20;  // snappier return to normal speed on release
+const NORMAL_SPEED = 2.0;   // slightly slower — easier to control
+const BOOST_SPEED  = 7.5;   // 3.75× normal, hold-only
+const SPEED_LERP   = 0.18;  // smooth speed transitions
 
 // ─── Steering ────────────────────────────────────────────────────────────────
-const MAX_TURN_RATE = 0.13;  // radians / tick — smooth arcs, can't spin in one gesture
+const MAX_TURN_RATE = 0.14;  // radians / tick — responsive smooth arcs
 
 // ─── Camera ──────────────────────────────────────────────────────────────────
-const CAM_LERP  = 0.07;   // gentle, no shake
-const CAM_AHEAD = 48;     // moderate look-ahead keeps snake near centre
+const CAM_LERP       = 0.08;  // tighter follow, no floatiness
+const CAM_AHEAD      = 28;    // modest look-ahead during normal movement
+const CAM_AHEAD_NONE = 0;     // no look-ahead during boost — camera stays on player
 
 // ─── Grid ────────────────────────────────────────────────────────────────────
 const GRID_SPACING = 100;
@@ -345,9 +346,14 @@ export default function SnakeShiftScreen() {
   const worldRef      = useRef<World>(freshWorld());
   const gameLoopRef   = useRef<ReturnType<typeof setInterval> | null>(null);
   const countdownRef  = useRef<ReturnType<typeof setInterval> | null>(null);
+  // Cooldown prevents the collision haptic from firing at 60 Hz; counts down in ticks
+  const collisionHapticCooldownRef = useRef(0);
   const isPressingRef = useRef(false);
   const isSteering    = useRef(false);   // true once finger has moved enough to steer
   const holdTimerRef  = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // Tracks last known pointer position so we derive angle from incremental movement,
+  // not total displacement — prevents spinning in small circles
+  const lastTouchRef  = useRef<{ x: number; y: number } | null>(null);
 
   const forceRender = useCallback(() => setTick(t => t + 1), []);
 
@@ -408,9 +414,15 @@ export default function SnakeShiftScreen() {
     // ── Collision: player head vs bot body segments ──────────────────────────
     const bBodyPos = getBodyPositions(b);
     const playerHitBot = bBodyPos.some(seg => dist2(pNew, seg) < COLLISION_DIST);
+    if (collisionHapticCooldownRef.current > 0) collisionHapticCooldownRef.current--;
     if (playerHitBot) {
       p.score = Math.max(0, p.score - 1);
-      if (Platform.OS !== 'web') Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Heavy);
+      // No haptic during boost (player moves 3.75× faster → clips bot body constantly).
+      // Cooldown prevents 60 Hz vibration when grazing the bot outside of boost.
+      if (Platform.OS !== 'web' && !p.isBoost && collisionHapticCooldownRef.current === 0) {
+        Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Heavy);
+        collisionHapticCooldownRef.current = 25; // ~400 ms at 60 fps
+      }
     }
 
     // ── Shape collection ────────────────────────────────────────────────────
@@ -438,9 +450,10 @@ export default function SnakeShiftScreen() {
       stopLoop(); forceRender(); return;
     }
 
-    // ── Camera ──────────────────────────────────────────────────────────────
-    w.camX += (pNew.x + pcA * CAM_AHEAD - w.camX) * CAM_LERP;
-    w.camY += (pNew.y + psA * CAM_AHEAD - w.camY) * CAM_LERP;
+    // ── Camera — no look-ahead during boost so camera doesn't rush forward ──
+    const camLookAhead = p.isBoost ? CAM_AHEAD_NONE : CAM_AHEAD;
+    w.camX += (pNew.x + pcA * camLookAhead - w.camX) * CAM_LERP;
+    w.camY += (pNew.y + psA * camLookAhead - w.camY) * CAM_LERP;
 
     forceRender();
   };
@@ -457,46 +470,55 @@ export default function SnakeShiftScreen() {
     if (worldRef.current.status !== 'playing') return;
     if (isReversal(p.angle, newAngle)) return;
     p.targetAngle = newAngle;
-    if (Platform.OS !== 'web') Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
   }, []);
 
   // ─── Pan responder ───────────────────────────────────────────────────────
-  // Worms-Zone-style: continuous angle from drag direction; boost = hold still.
+  // Worms-Zone-style controls:
+  //   • Angle is computed from the INCREMENTAL movement between each event
+  //     (not total displacement) — eliminates spinning in small circles.
+  //   • A 4 px minimum per-frame delta filters micro-jitter noise.
+  //   • Boost = hold finger still for 120 ms without moving.
+  //   • Any finger movement cancels boost immediately.
   const panResponder = React.useMemo(() => PanResponder.create({
     onStartShouldSetPanResponder: () => worldRef.current.status === 'playing',
     onMoveShouldSetPanResponder:  () => worldRef.current.status === 'playing',
 
-    onPanResponderGrant: () => {
+    onPanResponderGrant: (evt) => {
       isPressingRef.current = true;
       isSteering.current    = false;
+      lastTouchRef.current  = { x: evt.nativeEvent.pageX, y: evt.nativeEvent.pageY };
       if (holdTimerRef.current) clearTimeout(holdTimerRef.current);
-      // Finger held still → activate boost after 100 ms
       holdTimerRef.current = setTimeout(() => {
         if (!isSteering.current && isPressingRef.current) {
           worldRef.current.player.isBoost = true;
           forceRender();
         }
-      }, 100);
+      }, 120);
     },
 
-    onPanResponderMove: (_, gs) => {
-      const dist = Math.sqrt(gs.dx * gs.dx + gs.dy * gs.dy);
-      if (dist > 10) {
-        // Cancel boost timer once finger has moved
+    onPanResponderMove: (evt) => {
+      const cx = evt.nativeEvent.pageX;
+      const cy = evt.nativeEvent.pageY;
+      const last = lastTouchRef.current;
+      if (!last) { lastTouchRef.current = { x: cx, y: cy }; return; }
+      const ddx = cx - last.x;
+      const ddy = cy - last.y;
+      const moveDist = Math.sqrt(ddx * ddx + ddy * ddy);
+      if (moveDist > 4) {
         if (!isSteering.current) {
           isSteering.current = true;
           if (holdTimerRef.current) { clearTimeout(holdTimerRef.current); holdTimerRef.current = null; }
           worldRef.current.player.isBoost = false;
         }
-        // Continuous raw angle — no 90° snapping → smooth Worms-like arcs
-        steer(Math.atan2(gs.dy, gs.dx));
+        steer(Math.atan2(ddy, ddx));
+        lastTouchRef.current = { x: cx, y: cy };
       }
     },
 
     onPanResponderRelease: () => {
       isPressingRef.current = false;
       isSteering.current    = false;
-      // Immediately drop boost the moment finger lifts
+      lastTouchRef.current  = null;
       worldRef.current.player.isBoost = false;
       if (holdTimerRef.current) { clearTimeout(holdTimerRef.current); holdTimerRef.current = null; }
     },
@@ -504,6 +526,7 @@ export default function SnakeShiftScreen() {
     onPanResponderTerminate: () => {
       isPressingRef.current = false;
       isSteering.current    = false;
+      lastTouchRef.current  = null;
       worldRef.current.player.isBoost = false;
       if (holdTimerRef.current) { clearTimeout(holdTimerRef.current); holdTimerRef.current = null; }
     },
@@ -606,9 +629,6 @@ export default function SnakeShiftScreen() {
     <View style={styles.root}>
       {/* Background */}
       <LinearGradient colors={['#050512','#06061A','#050512']} style={StyleSheet.absoluteFill} />
-
-      {/* Boost screen-edge vignette */}
-      {isBoost && <View style={[styles.boostVignette, { pointerEvents: 'none' }]} />}
 
       {/* Full-screen gesture layer */}
       <View style={StyleSheet.absoluteFill} {...panResponder.panHandlers} />
@@ -924,7 +944,6 @@ const styles = StyleSheet.create({
   scoreDivider: { fontSize:18, color:'rgba(255,255,255,0.25)', fontFamily:'Inter_700Bold' },
 
   // Boost
-  boostVignette: { ...StyleSheet.absoluteFillObject, borderWidth:18, borderColor:'rgba(255,215,0,0.12)', zIndex:5 },
   boostBadge: { position:'absolute', alignSelf:'center', backgroundColor:'rgba(255,215,0,0.10)', borderRadius:24, paddingHorizontal:22, paddingVertical:8, borderWidth:1, borderColor:'rgba(255,215,0,0.32)', zIndex:20 },
   boostText: { fontSize:13, fontFamily:'Inter_700Bold', color:'#FFD700', letterSpacing:2 },
 
