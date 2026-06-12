@@ -518,7 +518,7 @@ export default function SnakeShiftScreen() {
           worldRef.current.player.isBoost = true;
           forceRender();
         }
-      }, 120);
+      }, 480);
     },
 
     onPanResponderMove: (evt) => {
