@@ -945,6 +945,78 @@ export default function SnakeShiftScreen() {
         </View>
       )}
 
+      {/* ── Minimap ── */}
+      {(w.status === 'playing' || w.status === 'countdown') && (() => {
+        const MM = 110;
+        const SCALE = MM / Math.max(ARENA_W, ARENA_H);
+        const DOT_SHAPE = 3.5;
+        const DOT_SEG   = 4.5;
+        const DOT_HEAD  = 7;
+        const allPSegs = getBodyPositions(p);
+        const allBSegs = getBodyPositions(b);
+        return (
+          <View style={[ssMapStyles.container, { top: insets.top + 56 }]}>
+            <View style={ssMapStyles.canvas}>
+              {/* Arena border */}
+              <View style={ssMapStyles.arenaBorder} />
+
+              {/* Collectible shapes */}
+              {w.shapes.map(s => (
+                <View key={s.id} style={[ssMapStyles.shapeDot, {
+                  left: s.x * SCALE - DOT_SHAPE,
+                  top:  s.y * SCALE - DOT_SHAPE,
+                  width:  DOT_SHAPE * 2,
+                  height: DOT_SHAPE * 2,
+                  borderRadius: DOT_SHAPE,
+                  backgroundColor: s.color,
+                }]} />
+              ))}
+
+              {/* Bot body (tail → head, fading) */}
+              {allBSegs.slice(0).reverse().map((seg, ri) => {
+                const i = allBSegs.length - 1 - ri;
+                const isHead = i === 0;
+                const r = isHead ? DOT_HEAD / 2 : DOT_SEG / 2;
+                return (
+                  <View key={`bm${i}`} style={[ssMapStyles.segDot, {
+                    left: seg.x * SCALE - r,
+                    top:  seg.y * SCALE - r,
+                    width:  r * 2,
+                    height: r * 2,
+                    borderRadius: r,
+                    backgroundColor: BOT_COLOR,
+                    opacity: isHead ? 1 : 0.45 + 0.55 * (i / Math.max(1, allBSegs.length - 1)),
+                  }]} />
+                );
+              })}
+
+              {/* Player body (tail → head, colored by shape) */}
+              {allPSegs.slice(0).reverse().map((seg, ri) => {
+                const i = allPSegs.length - 1 - ri;
+                const isHead = i === 0;
+                const badge = i > 0 ? p.collectedSegs[i - 1] : null;
+                const color = badge ? badge.color : snakeColor;
+                const r = isHead ? DOT_HEAD / 2 : DOT_SEG / 2;
+                return (
+                  <View key={`pm${i}`} style={[ssMapStyles.segDot, {
+                    left: seg.x * SCALE - r,
+                    top:  seg.y * SCALE - r,
+                    width:  r * 2,
+                    height: r * 2,
+                    borderRadius: r,
+                    backgroundColor: color,
+                    borderWidth: isHead ? 1.5 : 0,
+                    borderColor: '#FFFFFF',
+                    opacity: isHead ? 1 : 0.5 + 0.5 * (i / Math.max(1, allPSegs.length - 1)),
+                  }]} />
+                );
+              })}
+            </View>
+            <Text style={ssMapStyles.label}>MAP</Text>
+          </View>
+        );
+      })()}
+
       {/* Countdown */}
       {countdown > 0 && (
         <View style={[styles.overlay, { pointerEvents: 'none' }]}>
@@ -1029,6 +1101,50 @@ export default function SnakeShiftScreen() {
     </View>
   );
 }
+
+// ─── Minimap styles ──────────────────────────────────────────────────────────
+const ssMapStyles = StyleSheet.create({
+  container: {
+    position: 'absolute',
+    right: 10,
+    width: 120,
+    backgroundColor: 'rgba(5,5,22,0.88)',
+    borderRadius: 12,
+    borderWidth: 1.5,
+    borderColor: 'rgba(94,92,230,0.40)',
+    zIndex: 25,
+    overflow: 'hidden',
+    paddingTop: 6,
+    paddingHorizontal: 5,
+    paddingBottom: 4,
+  },
+  canvas: {
+    width: 110,
+    height: 110,
+    position: 'relative',
+  },
+  arenaBorder: {
+    position: 'absolute',
+    inset: 0,
+    borderWidth: 1,
+    borderColor: 'rgba(94,92,230,0.30)',
+    borderRadius: 2,
+  },
+  shapeDot: {
+    position: 'absolute',
+  },
+  segDot: {
+    position: 'absolute',
+  },
+  label: {
+    fontSize: 8,
+    fontFamily: 'Inter_700Bold',
+    color: 'rgba(255,255,255,0.30)',
+    textAlign: 'center',
+    letterSpacing: 2,
+    marginTop: 3,
+  },
+});
 
 // ─── Styles ──────────────────────────────────────────────────────────────────
 const styles = StyleSheet.create({
