@@ -413,15 +413,25 @@ export default function SnakeShiftScreen() {
     runBotAI(w);
 
     // ── Collision: player head vs bot body segments ──────────────────────────
+    // Score is NEVER reduced on bot collision. Player is pushed away (slide/block).
     const bBodyPos = getBodyPositions(b);
-    const playerHitBot = bBodyPos.some(seg => dist2(pNew, seg) < COLLISION_DIST);
     if (collisionHapticCooldownRef.current > 0) collisionHapticCooldownRef.current--;
-    if (playerHitBot) {
-      p.score = Math.max(0, p.score - 1);
-      // No haptic during boost (player moves 3.75× faster → clips bot body constantly).
-      // Cooldown prevents 60 Hz vibration when grazing the bot outside of boost.
+    let closestBotSeg: Vec2 | null = null;
+    let closestDist = Infinity;
+    for (const seg of bBodyPos) {
+      const d = dist2(pNew, seg);
+      if (d < COLLISION_DIST && d < closestDist) { closestDist = d; closestBotSeg = seg; }
+    }
+    if (closestBotSeg !== null) {
+      // Push player head to exactly COLLISION_DIST away from the colliding segment
+      const dx = pNew.x - closestBotSeg.x;
+      const dy = pNew.y - closestBotSeg.y;
+      const mag = Math.sqrt(dx * dx + dy * dy) || 1;
+      pNew.x = closestBotSeg.x + (dx / mag) * COLLISION_DIST;
+      pNew.y = closestBotSeg.y + (dy / mag) * COLLISION_DIST;
+      // Light haptic feedback — no score change
       if (Platform.OS !== 'web' && !p.isBoost && collisionHapticCooldownRef.current === 0) {
-        Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Heavy);
+        Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
         collisionHapticCooldownRef.current = 25; // ~400 ms at 60 fps
       }
     }
