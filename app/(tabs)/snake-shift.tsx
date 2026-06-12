@@ -159,15 +159,27 @@ function buildPath(sx: number, sy: number, angle: number, numSegs: number): Vec2
   }));
 }
 
-// ─── Body positions (sampled from path) ──────────────────────────────────────
+// ─── Body positions (sampled from path by physical distance) ─────────────────
+// Walks the path accumulating real pixel distance so segments stay evenly
+// spaced at SEG_GAP regardless of speed or transitions (no index-step trick).
 function getBodyPositions(snake: SnakeCore): Vec2[] {
-  const step = Math.max(1, Math.round(SEG_GAP / Math.max(snake.speed, NORMAL_SPEED)));
   const out: Vec2[] = [];
-  for (let i = 0; i < snake.numSegs; i++) {
-    const idx = i === 0 ? 0 : i * step;
-    const pos = snake.path[Math.min(idx, snake.path.length - 1)];
-    if (pos) out.push(pos);
+  const path = snake.path;
+  if (path.length === 0) return out;
+
+  out.push(path[0]); // head always first
+  let accumulated = 0;
+
+  for (let i = 1; i < path.length && out.length < snake.numSegs; i++) {
+    const dx = path[i].x - path[i - 1].x;
+    const dy = path[i].y - path[i - 1].y;
+    accumulated += Math.sqrt(dx * dx + dy * dy);
+    if (accumulated >= SEG_GAP) {
+      out.push(path[i]);
+      accumulated = 0;
+    }
   }
+
   return out;
 }
 
