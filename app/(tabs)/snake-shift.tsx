@@ -58,8 +58,8 @@ const GRID_SPACING = 100;
 const TICK_MS      = 16;     // ~60 fps
 
 // ─── Game rules ──────────────────────────────────────────────────────────────
-const TOTAL_MATCH_SHAPES = 120;  // shapes to collect in match (bot starts at 1 bonus)
-const SHAPES_ON_FIELD    = 40;   // maintained on screen until pool runs out
+const TOTAL_MATCH_SHAPES = 60;   // shapes to collect in match (bot starts at 1 bonus)
+const SHAPES_ON_FIELD    = 20;   // maintained on screen until pool runs out
 const INITIAL_BOT_SCORE  = 1;
 const SHAPE_R            = 16;  // visual radius of field items
 const COLLECT_R          = 28;  // pickup trigger radius
@@ -194,7 +194,7 @@ function spawnShape(existing: ShapeItem[], near?: Vec2): ShapeItem {
     if (near) {
       // Spawn in a ring 150–500px around the player so shapes are always visible
       const angle = Math.random() * Math.PI * 2;
-      const r     = 150 + Math.random() * (SPAWN_NEAR_RADIUS - 150);
+      const r     = 350 + Math.random() * (SPAWN_NEAR_RADIUS - 350);
       nx = near.x + Math.cos(angle) * r;
       ny = near.y + Math.sin(angle) * r;
       // Clamp to arena bounds
