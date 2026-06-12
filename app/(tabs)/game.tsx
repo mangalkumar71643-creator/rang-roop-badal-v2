@@ -399,6 +399,57 @@ export default function GameScreen() {
         </View>
       )}
 
+      {/* Minimap */}
+      {e.status === 'playing' && (
+        <View style={[styles.minimap, { top: insets.top + 90 }]} pointerEvents="none">
+          {(() => {
+            const MINI_H = 76;
+            const MINI_W = 34;
+            const DOT = 7;
+            const gateDotY = Math.max(0, Math.min(MINI_H - DOT, (e.gateY / SH) * MINI_H));
+            const playerDotY = Math.min(MINI_H - DOT, (CHARACTER_Y / SH) * MINI_H);
+            const gColor = e.currentGate ? GAME_COLORS[e.currentGate.color] : '#FFFFFF';
+            return (
+              <>
+                <View style={styles.minimapTrack} />
+                {e.currentGate && (
+                  <View
+                    style={[
+                      styles.minimapDot,
+                      {
+                        top: gateDotY,
+                        left: MINI_W / 2 - DOT / 2,
+                        width: DOT,
+                        height: DOT,
+                        borderRadius: DOT / 2,
+                        backgroundColor: gColor,
+                        shadowColor: gColor,
+                      },
+                    ]}
+                  />
+                )}
+                <View
+                  style={[
+                    styles.minimapDot,
+                    {
+                      top: playerDotY,
+                      left: MINI_W / 2 - DOT / 2,
+                      width: DOT + 1,
+                      height: DOT + 1,
+                      borderRadius: (DOT + 1) / 2,
+                      backgroundColor: playerColorHex,
+                      shadowColor: playerColorHex,
+                      borderWidth: 1.5,
+                      borderColor: '#fff',
+                    },
+                  ]}
+                />
+              </>
+            );
+          })()}
+        </View>
+      )}
+
       {/* Tap area */}
       <Pressable style={StyleSheet.absoluteFill} onPress={handleScreenPress} />
 
@@ -592,6 +643,34 @@ const styles = StyleSheet.create({
     paddingVertical: 4,
   },
   nextLabel: { fontSize: 9, fontFamily: 'Inter_600SemiBold', color: '#5555AA', letterSpacing: 1 },
+  minimap: {
+    position: 'absolute',
+    right: 14,
+    width: 34,
+    height: 76,
+    borderRadius: 8,
+    backgroundColor: 'rgba(255,255,255,0.06)',
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.1)',
+    zIndex: 20,
+    overflow: 'visible',
+  },
+  minimapTrack: {
+    position: 'absolute',
+    top: 4,
+    bottom: 4,
+    left: 16,
+    width: 1,
+    backgroundColor: 'rgba(255,255,255,0.12)',
+    borderRadius: 1,
+  },
+  minimapDot: {
+    position: 'absolute',
+    shadowOffset: { width: 0, height: 0 },
+    shadowOpacity: 0.9,
+    shadowRadius: 4,
+    elevation: 4,
+  },
   gate: {
     position: 'absolute',
     left: 0,
