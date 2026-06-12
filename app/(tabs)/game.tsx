@@ -65,6 +65,108 @@ interface Engine {
   timeLeft: number;
 }
 
+const MINI_H = 80;
+const MINI_W = 36;
+const DOT = 8;
+
+function MinimapPanel({
+  gateY,
+  gateColor,
+  playerColor,
+  characterY,
+  screenH,
+  top,
+}: {
+  gateY: number;
+  gateColor: string | null;
+  playerColor: string;
+  characterY: number;
+  screenH: number;
+  top: number;
+}) {
+  const gateFrac = Math.max(0, Math.min(1, gateY / screenH));
+  const playerFrac = Math.max(0, Math.min(1, characterY / screenH));
+  const gateDotTop = Math.round(gateFrac * (MINI_H - DOT));
+  const playerDotTop = Math.round(playerFrac * (MINI_H - DOT));
+  const dotLeft = Math.round(MINI_W / 2 - DOT / 2);
+
+  return (
+    <View
+      pointerEvents="none"
+      style={[mmStyles.container, { top, right: 14 }]}
+    >
+      <Text style={mmStyles.label}>MAP</Text>
+      <View style={mmStyles.track} />
+      {gateColor && (
+        <View
+          style={[
+            mmStyles.dot,
+            {
+              top: 18 + gateDotTop,
+              left: dotLeft,
+              backgroundColor: gateColor,
+              borderColor: gateColor,
+            },
+          ]}
+        />
+      )}
+      <View
+        style={[
+          mmStyles.dot,
+          mmStyles.playerDot,
+          {
+            top: 18 + playerDotTop,
+            left: dotLeft,
+            backgroundColor: playerColor,
+            borderColor: '#FFFFFF',
+          },
+        ]}
+      />
+    </View>
+  );
+}
+
+const mmStyles = StyleSheet.create({
+  container: {
+    position: 'absolute',
+    width: MINI_W,
+    height: MINI_H + 22,
+    backgroundColor: 'rgba(10,10,30,0.75)',
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.18)',
+    borderRadius: 8,
+    zIndex: 20,
+    overflow: 'hidden',
+  },
+  label: {
+    fontSize: 7,
+    fontFamily: 'Inter_700Bold',
+    color: 'rgba(255,255,255,0.35)',
+    letterSpacing: 1,
+    textAlign: 'center',
+    paddingTop: 4,
+    paddingBottom: 2,
+  },
+  track: {
+    position: 'absolute',
+    top: 18,
+    bottom: 4,
+    left: MINI_W / 2 - 0.5,
+    width: 1,
+    backgroundColor: 'rgba(255,255,255,0.15)',
+  },
+  dot: {
+    position: 'absolute',
+    width: DOT,
+    height: DOT,
+    borderRadius: DOT / 2,
+    borderWidth: 1.5,
+  },
+  playerDot: {
+    borderWidth: 2,
+  },
+});
+
 function randomGate(): GateData {
   const color = GAME_COLOR_NAMES[Math.floor(Math.random() * GAME_COLOR_NAMES.length)];
   const shape = GAME_SHAPE_NAMES[Math.floor(Math.random() * GAME_SHAPE_NAMES.length)];
@@ -400,54 +502,15 @@ export default function GameScreen() {
       )}
 
       {/* Minimap */}
-      {e.status === 'playing' && (
-        <View style={[styles.minimap, { top: insets.top + 90 }]} pointerEvents="none">
-          {(() => {
-            const MINI_H = 76;
-            const MINI_W = 34;
-            const DOT = 7;
-            const gateDotY = Math.max(0, Math.min(MINI_H - DOT, (e.gateY / SH) * MINI_H));
-            const playerDotY = Math.min(MINI_H - DOT, (CHARACTER_Y / SH) * MINI_H);
-            const gColor = e.currentGate ? GAME_COLORS[e.currentGate.color] : '#FFFFFF';
-            return (
-              <>
-                <View style={styles.minimapTrack} />
-                {e.currentGate && (
-                  <View
-                    style={[
-                      styles.minimapDot,
-                      {
-                        top: gateDotY,
-                        left: MINI_W / 2 - DOT / 2,
-                        width: DOT,
-                        height: DOT,
-                        borderRadius: DOT / 2,
-                        backgroundColor: gColor,
-                        shadowColor: gColor,
-                      },
-                    ]}
-                  />
-                )}
-                <View
-                  style={[
-                    styles.minimapDot,
-                    {
-                      top: playerDotY,
-                      left: MINI_W / 2 - DOT / 2,
-                      width: DOT + 1,
-                      height: DOT + 1,
-                      borderRadius: (DOT + 1) / 2,
-                      backgroundColor: playerColorHex,
-                      shadowColor: playerColorHex,
-                      borderWidth: 1.5,
-                      borderColor: '#fff',
-                    },
-                  ]}
-                />
-              </>
-            );
-          })()}
-        </View>
+      {(e.status === 'playing' || e.status === 'countdown') && (
+        <MinimapPanel
+          gateY={e.gateY}
+          gateColor={e.currentGate ? GAME_COLORS[e.currentGate.color] : null}
+          playerColor={playerColorHex}
+          characterY={CHARACTER_Y}
+          screenH={SH}
+          top={insets.top + 90}
+        />
       )}
 
       {/* Tap area */}
@@ -643,34 +706,6 @@ const styles = StyleSheet.create({
     paddingVertical: 4,
   },
   nextLabel: { fontSize: 9, fontFamily: 'Inter_600SemiBold', color: '#5555AA', letterSpacing: 1 },
-  minimap: {
-    position: 'absolute',
-    right: 14,
-    width: 34,
-    height: 76,
-    borderRadius: 8,
-    backgroundColor: 'rgba(255,255,255,0.06)',
-    borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.1)',
-    zIndex: 20,
-    overflow: 'visible',
-  },
-  minimapTrack: {
-    position: 'absolute',
-    top: 4,
-    bottom: 4,
-    left: 16,
-    width: 1,
-    backgroundColor: 'rgba(255,255,255,0.12)',
-    borderRadius: 1,
-  },
-  minimapDot: {
-    position: 'absolute',
-    shadowOffset: { width: 0, height: 0 },
-    shadowOpacity: 0.9,
-    shadowRadius: 4,
-    elevation: 4,
-  },
   gate: {
     position: 'absolute',
     left: 0,
