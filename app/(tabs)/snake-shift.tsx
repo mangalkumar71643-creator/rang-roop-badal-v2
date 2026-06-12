@@ -184,14 +184,27 @@ function getBodyPositions(snake: SnakeCore): Vec2[] {
 }
 
 // ─── Shape spawning ──────────────────────────────────────────────────────────
+const SPAWN_NEAR_RADIUS = 500;  // max px from player to spawn new shapes
 let _shapeSeq = 0;
-function spawnShape(existing: ShapeItem[]): ShapeItem {
-  const M = 300;
-  let x = M, y = M;
-  for (let t = 0; t < 20; t++) {
-    const nx = M + Math.random() * (ARENA_W - M * 2);
-    const ny = M + Math.random() * (ARENA_H - M * 2);
-    if (!existing.some(s => dist2({ x: nx, y: ny }, s) < 220)) { x = nx; y = ny; break; }
+function spawnShape(existing: ShapeItem[], near?: Vec2): ShapeItem {
+  const M = 80;
+  let x = ARENA_W / 2, y = ARENA_H / 2;
+  for (let t = 0; t < 30; t++) {
+    let nx: number, ny: number;
+    if (near) {
+      // Spawn in a ring 150–500px around the player so shapes are always visible
+      const angle = Math.random() * Math.PI * 2;
+      const r     = 150 + Math.random() * (SPAWN_NEAR_RADIUS - 150);
+      nx = near.x + Math.cos(angle) * r;
+      ny = near.y + Math.sin(angle) * r;
+      // Clamp to arena bounds
+      nx = Math.max(M, Math.min(ARENA_W - M, nx));
+      ny = Math.max(M, Math.min(ARENA_H - M, ny));
+    } else {
+      nx = M + Math.random() * (ARENA_W - M * 2);
+      ny = M + Math.random() * (ARENA_H - M * 2);
+    }
+    if (!existing.some(s => dist2({ x: nx, y: ny }, s) < 120)) { x = nx; y = ny; break; }
   }
   return {
     id:    `sh${_shapeSeq++}`,
@@ -201,9 +214,9 @@ function spawnShape(existing: ShapeItem[]): ShapeItem {
   };
 }
 
-function makeInitialShapes(): ShapeItem[] {
+function makeInitialShapes(playerStart: Vec2): ShapeItem[] {
   const arr: ShapeItem[] = [];
-  for (let i = 0; i < SHAPES_ON_FIELD; i++) arr.push(spawnShape(arr));
+  for (let i = 0; i < SHAPES_ON_FIELD; i++) arr.push(spawnShape(arr, playerStart));
   return arr;
 }
 
@@ -315,7 +328,7 @@ function freshWorld(): World {
       boostTimer:    0,
       boostCooldown: 300,  // 5 s head-start before the first bot boost
     },
-    shapes:        makeInitialShapes(),
+    shapes:        makeInitialShapes({ x: ARENA_W / 2, y: ARENA_H / 2 }),
     shapesSpawned: SHAPES_ON_FIELD,
     camX:          ARENA_W / 2,
     camY:          ARENA_H / 2 - CAM_AHEAD,
@@ -465,7 +478,7 @@ export default function SnakeShiftScreen() {
       // Respawn until pool exhausted
       const toSpawn = Math.min(remove.size, TOTAL_MATCH_SHAPES - w.shapesSpawned);
       for (let i = 0; i < toSpawn; i++) {
-        w.shapes.push(spawnShape(w.shapes));
+        w.shapes.push(spawnShape(w.shapes, w.player.path[0]));
         w.shapesSpawned++;
       }
     }
