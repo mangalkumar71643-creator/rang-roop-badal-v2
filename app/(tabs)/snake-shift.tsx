@@ -19,6 +19,7 @@ import {
   View,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import Svg, { Line as SvgLine, Polygon as SvgPolygon } from 'react-native-svg';
 
 import { CHARACTERS, GAME_COLORS, GAME_SHAPE_NAMES } from '@/constants/gameConfig';
 import type { GameShape } from '@/constants/gameConfig';
@@ -700,28 +701,75 @@ export default function SnakeShiftScreen() {
           );
         })}
 
-        {/* Bot body circles (tail → head) */}
+        {/* Bot body — geometric blocks (tail → head) */}
         {Array.from({ length: b.numSegs - 1 }, (_, i) => {
           const si  = b.numSegs - 1 - i;
           const seg = bSegs[si]; if (!seg) return null;
-          const t     = (si - 1) / Math.max(1, b.numSegs - 2);
-          const r     = BODY_R * (1 - t * 0.28);
-          const alpha = 0.88 - t * 0.55;
+          const t   = si / Math.max(1, b.numSegs - 1);
+          const sz  = Math.max(12, BODY_R * 2.5 * (1 - t * 0.48));
+          const shape = GAME_SHAPE_NAMES[si % GAME_SHAPE_NAMES.length];
           return (
             <View key={`bb${si}`} style={{
-              position:'absolute', left:seg.x-r, top:seg.y-r, width:r*2, height:r*2,
-              borderRadius:r, backgroundColor:BOT_COLOR, opacity:b.isBoost ? alpha*0.70 : alpha,
+              position:'absolute', left:seg.x-sz/2, top:seg.y-sz/2,
+              width:sz, height:sz, borderRadius:sz*0.28,
+              backgroundColor:`${BOT_COLOR}18`,
+              borderWidth:1.5, borderColor:`${BOT_COLOR}80`,
+              alignItems:'center', justifyContent:'center',
+              boxShadow:`0 0 ${Math.max(4, 10*(1-t))}px ${BOT_COLOR}`,
+              opacity: b.isBoost ? 0.7 : 1,
+            }}>
+              <Text style={{
+                fontSize:sz*0.46, color:BOT_COLOR,
+                textShadowColor:BOT_COLOR, textShadowOffset:{width:0,height:0},
+                textShadowRadius:6, lineHeight:sz*0.56,
+              }}>{SHAPE_SYMBOLS[shape]}</Text>
+            </View>
+          );
+        })}
+
+        {/* Bot connectors */}
+        {Array.from({ length: Math.min(b.numSegs - 1, bSegs.length - 1) }, (_, i) => {
+          const segA = bSegs[i], segB = bSegs[i + 1];
+          if (!segA || !segB) return null;
+          const t  = i / Math.max(1, b.numSegs - 1);
+          const cr = Math.max(4, BODY_R * 0.55 * (1 - t * 0.5));
+          return (
+            <View key={`bc${i}`} style={{
+              position:'absolute',
+              left:(segA.x+segB.x)/2-cr, top:(segA.y+segB.y)/2-cr,
+              width:cr*2, height:cr*2,
+              backgroundColor:`${BOT_COLOR}28`,
+              borderWidth:1, borderColor:`${BOT_COLOR}60`,
+              transform:[{ rotate:'45deg' }],
             }} />
           );
         })}
 
-        {/* Bot head */}
+        {/* Bot head — geometric hexagon wireframe */}
         {bSegs[0] && (() => {
           const h = bSegs[0];
+          const hR = HEAD_R * 1.6;
+          const svgS = hR * 2.6;
+          const scx = svgS / 2, scy = svgS / 2;
+          const rotateDeg = b.angle * 180 / Math.PI;
+          const outerPts = Array.from({length:6},(_,qi)=>{const a=qi*Math.PI/3;return `${scx+hR*Math.cos(a)},${scy+hR*Math.sin(a)}`;}).join(' ');
+          const innerPts = Array.from({length:6},(_,qi)=>{const a=qi*Math.PI/3+Math.PI/6;return `${scx+hR*0.42*Math.cos(a)},${scy+hR*0.42*Math.sin(a)}`;}).join(' ');
+          const outerV  = Array.from({length:6},(_,qi)=>({x:scx+hR*Math.cos(qi*Math.PI/3),y:scy+hR*Math.sin(qi*Math.PI/3)}));
+          const innerV  = Array.from({length:6},(_,qi)=>({x:scx+hR*0.42*Math.cos(qi*Math.PI/3+Math.PI/6),y:scy+hR*0.42*Math.sin(qi*Math.PI/3+Math.PI/6)}));
+          const fc=Math.cos(b.angle),fs=Math.sin(b.angle),pc2=-Math.sin(b.angle),ps2=Math.cos(b.angle);
+          const eDist=hR*0.45, eSep=hR*0.28;
           return (
             <>
-              <View style={{ position:'absolute', left:h.x-HEAD_R*2.0, top:h.y-HEAD_R*2.0, width:HEAD_R*4, height:HEAD_R*4, borderRadius:HEAD_R*2, backgroundColor:BOT_COLOR, opacity:b.isBoost?0.26:0.12 }} />
-              <View style={[styles.head,{left:h.x-HEAD_R,top:h.y-HEAD_R,width:HEAD_R*2,height:HEAD_R*2,borderRadius:HEAD_R,backgroundColor:BOT_COLOR,boxShadow:`0 0 14px ${BOT_COLOR}`,borderColor:'rgba(255,255,255,0.40)'}]} />
+              <View style={{position:'absolute',left:h.x-hR*1.9,top:h.y-hR*1.9,width:hR*3.8,height:hR*3.8,borderRadius:hR*1.9,backgroundColor:BOT_COLOR,opacity:b.isBoost?0.18:0.08}}/>
+              <View style={{position:'absolute',left:h.x-svgS/2,top:h.y-svgS/2,width:svgS,height:svgS,transform:[{rotate:`${rotateDeg}deg`}]}}>
+                <Svg width={svgS} height={svgS}>
+                  <SvgPolygon points={outerPts} fill={`${BOT_COLOR}18`} stroke={BOT_COLOR} strokeWidth={2} strokeLinejoin="round"/>
+                  <SvgPolygon points={innerPts} fill={`${BOT_COLOR}10`} stroke={BOT_COLOR} strokeWidth={1} opacity={0.7}/>
+                  {outerV.map((ov,qi)=><SvgLine key={qi} x1={ov.x} y1={ov.y} x2={innerV[qi].x} y2={innerV[qi].y} stroke={BOT_COLOR} strokeWidth={0.8} opacity={0.5}/>)}
+                </Svg>
+              </View>
+              <View style={{position:'absolute',left:h.x+fc*eDist+pc2*eSep-3.5,top:h.y+fs*eDist+ps2*eSep-3.5,width:7,height:7,borderRadius:3.5,backgroundColor:'#FFFFFF',boxShadow:'0 0 4px #FFFFFF'}}/>
+              <View style={{position:'absolute',left:h.x+fc*eDist-pc2*eSep-3.5,top:h.y+fs*eDist-ps2*eSep-3.5,width:7,height:7,borderRadius:3.5,backgroundColor:'#FFFFFF',boxShadow:'0 0 4px #FFFFFF'}}/>
             </>
           );
         })()}
@@ -741,48 +789,77 @@ export default function SnakeShiftScreen() {
           );
         })}
 
-        {/* Player body circles (tail → head) */}
+        {/* Player body — geometric blocks (tail → head) */}
         {Array.from({ length: p.numSegs - 1 }, (_, i) => {
-          const si  = p.numSegs - 1 - i;
-          const seg = pSegs[si]; if (!seg) return null;
-          const t     = (si - 1) / Math.max(1, p.numSegs - 2);
-          const r     = BODY_R * (1 - t * 0.30);
-          const alpha = 0.92 - t * 0.60;
+          const si    = p.numSegs - 1 - i;
+          const seg   = pSegs[si]; if (!seg) return null;
+          const t     = si / Math.max(1, p.numSegs - 1);
+          const sz    = Math.max(12, BODY_R * 2.6 * (1 - t * 0.46));
+          const badge = p.collectedSegs[si - 1];
+          const shape = badge?.shape ?? GAME_SHAPE_NAMES[si % GAME_SHAPE_NAMES.length];
+          const shapeColor = badge?.color ?? snakeColor;
           return (
             <View key={`pb${si}`} style={{
-              position:'absolute', left:seg.x-r, top:seg.y-r, width:r*2, height:r*2,
-              borderRadius:r, backgroundColor:snakeColor, opacity:isBoost ? alpha*0.70 : alpha,
-            }} />
-          );
-        })}
-
-        {/* Player body badges (shape type + count) — rendered separately at full opacity */}
-        {p.collectedSegs.map((badge, bi) => {
-          const si  = bi + 1; // badge[0] → body segment 1 (near head)
-          const seg = pSegs[si]; if (!seg) return null;
-          const t = (si - 1) / Math.max(1, p.numSegs - 2);
-          const r = BODY_R * (1 - t * 0.30);
-          if (r < 7) return null;
-          return (
-            <View key={`pbadge${bi}`} style={{
-              position:'absolute', left:seg.x-r, top:seg.y-r,
-              width:r*2, height:r*2, alignItems:'center', justifyContent:'center',
+              position:'absolute', left:seg.x-sz/2, top:seg.y-sz/2,
+              width:sz, height:sz, borderRadius:sz*0.28,
+              backgroundColor:badge ? `${badge.color}18` : `${snakeColor}18`,
+              borderWidth:1.5, borderColor:badge ? `${badge.color}88` : `${snakeColor}70`,
+              alignItems:'center', justifyContent:'center',
+              boxShadow:`0 0 ${Math.max(5, 13*(1-t))}px ${shapeColor}`,
+              opacity: isBoost ? 0.75 : 1,
             }}>
-              <Text style={{ fontSize:Math.max(6, r * 0.62), color:'#FFFFFF', fontWeight:'bold', lineHeight:r*1.1, textAlign:'center' }}>
-                {SHAPE_SYMBOLS[badge.shape]}{badge.count > 1 ? `${badge.count}` : ''}
-              </Text>
+              <Text style={{
+                fontSize:sz*0.47, color:shapeColor,
+                textShadowColor:shapeColor, textShadowOffset:{width:0,height:0},
+                textShadowRadius:badge ? 9 : 5, lineHeight:sz*0.56,
+              }}>{SHAPE_SYMBOLS[shape]}</Text>
             </View>
           );
         })}
 
-        {/* Player head */}
+        {/* Player connectors */}
+        {Array.from({ length: Math.min(p.numSegs - 1, pSegs.length - 1) }, (_, i) => {
+          const segA = pSegs[i], segB = pSegs[i + 1];
+          if (!segA || !segB) return null;
+          const t  = i / Math.max(1, p.numSegs - 1);
+          const cr = Math.max(4, BODY_R * 0.58 * (1 - t * 0.5));
+          return (
+            <View key={`pc${i}`} style={{
+              position:'absolute',
+              left:(segA.x+segB.x)/2-cr, top:(segA.y+segB.y)/2-cr,
+              width:cr*2, height:cr*2,
+              backgroundColor:`${snakeColor}25`,
+              borderWidth:1, borderColor:`${snakeColor}60`,
+              transform:[{ rotate:'45deg' }],
+            }} />
+          );
+        })}
+
+        {/* Player head — geometric hexagon wireframe */}
         {pSegs[0] && (() => {
           const h = pSegs[0];
+          const hR = HEAD_R * 1.75;
+          const svgS = hR * 2.6;
+          const scx = svgS / 2, scy = svgS / 2;
+          const rotateDeg = p.angle * 180 / Math.PI;
+          const outerPts = Array.from({length:6},(_,qi)=>{const a=qi*Math.PI/3;return `${scx+hR*Math.cos(a)},${scy+hR*Math.sin(a)}`;}).join(' ');
+          const innerPts = Array.from({length:6},(_,qi)=>{const a=qi*Math.PI/3+Math.PI/6;return `${scx+hR*0.42*Math.cos(a)},${scy+hR*0.42*Math.sin(a)}`;}).join(' ');
+          const outerV  = Array.from({length:6},(_,qi)=>({x:scx+hR*Math.cos(qi*Math.PI/3),y:scy+hR*Math.sin(qi*Math.PI/3)}));
+          const innerV  = Array.from({length:6},(_,qi)=>({x:scx+hR*0.42*Math.cos(qi*Math.PI/3+Math.PI/6),y:scy+hR*0.42*Math.sin(qi*Math.PI/3+Math.PI/6)}));
+          const fc=Math.cos(p.angle),fs=Math.sin(p.angle),pc2=-Math.sin(p.angle),ps2=Math.cos(p.angle);
+          const eDist=hR*0.48, eSep=hR*0.30;
           return (
             <>
-              <View style={{ position:'absolute', left:h.x-HEAD_R*2.2, top:h.y-HEAD_R*2.2, width:HEAD_R*4.4, height:HEAD_R*4.4, borderRadius:HEAD_R*2.2, backgroundColor:headGlow, opacity:isBoost?0.28:0.12 }} />
-              <View style={{ position:'absolute', left:h.x-HEAD_R*1.45, top:h.y-HEAD_R*1.45, width:HEAD_R*2.9, height:HEAD_R*2.9, borderRadius:HEAD_R*1.45, backgroundColor:headGlow, opacity:isBoost?0.20:0.09 }} />
-              <View style={[styles.head,{left:h.x-HEAD_R,top:h.y-HEAD_R,width:HEAD_R*2,height:HEAD_R*2,borderRadius:HEAD_R,backgroundColor:headGlow,boxShadow:`0 0 16px ${headGlow}`,borderColor:isBoost?'#FFFFFF':'rgba(255,255,255,0.45)'}]} />
+              <View style={{position:'absolute',left:h.x-hR*2.0,top:h.y-hR*2.0,width:hR*4.0,height:hR*4.0,borderRadius:hR*2,backgroundColor:headGlow,opacity:isBoost?0.22:0.10}}/>
+              <View style={{position:'absolute',left:h.x-svgS/2,top:h.y-svgS/2,width:svgS,height:svgS,transform:[{rotate:`${rotateDeg}deg`}]}}>
+                <Svg width={svgS} height={svgS}>
+                  <SvgPolygon points={outerPts} fill={`${headGlow}22`} stroke={headGlow} strokeWidth={2.5} strokeLinejoin="round"/>
+                  <SvgPolygon points={innerPts} fill={`${headGlow}12`} stroke={headGlow} strokeWidth={1.2} opacity={0.8}/>
+                  {outerV.map((ov,qi)=><SvgLine key={qi} x1={ov.x} y1={ov.y} x2={innerV[qi].x} y2={innerV[qi].y} stroke={headGlow} strokeWidth={1.0} opacity={0.55}/>)}
+                </Svg>
+              </View>
+              <View style={{position:'absolute',left:h.x+fc*eDist+pc2*eSep-3.5,top:h.y+fs*eDist+ps2*eSep-3.5,width:7,height:7,borderRadius:3.5,backgroundColor:'#FFFFFF',boxShadow:'0 0 6px #FFFFFF'}}/>
+              <View style={{position:'absolute',left:h.x+fc*eDist-pc2*eSep-3.5,top:h.y+fs*eDist-ps2*eSep-3.5,width:7,height:7,borderRadius:3.5,backgroundColor:'#FFFFFF',boxShadow:'0 0 6px #FFFFFF'}}/>
             </>
           );
         })()}
