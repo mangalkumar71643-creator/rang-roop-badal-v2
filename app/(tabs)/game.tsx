@@ -184,8 +184,8 @@ export default function GameScreen() {
   const CHARACTER_Y = SH - insets.bottom - 190 - SHAPE_BAR_HEIGHT;
   const COLLISION_Y = CHARACTER_Y - GATE_H / 2;
 
-  // Classic mode runs ~27.5% slower so players have more reaction time
-  const CLASSIC_SPEED_FACTOR = mode === 'classic' ? 0.725 : 1;
+  // Classic mode runs ~49% slower so players have more reaction time
+  const CLASSIC_SPEED_FACTOR = mode === 'classic' ? 0.508 : 1;
   const effectiveInitialSpeed = GAME_CONFIG.INITIAL_SPEED * CLASSIC_SPEED_FACTOR;
   const effectiveMaxSpeed = GAME_CONFIG.MAX_SPEED * CLASSIC_SPEED_FACTOR;
   const effectiveSpeedIncrement = GAME_CONFIG.SPEED_INCREMENT * CLASSIC_SPEED_FACTOR;
