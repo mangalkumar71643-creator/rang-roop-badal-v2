@@ -91,10 +91,7 @@ function MinimapPanel({
   const dotLeft = Math.round(MINI_W / 2 - DOT / 2);
 
   return (
-    <View
-      pointerEvents="none"
-      style={[mmStyles.container, { top, right: 14 }]}
-    >
+    <View style={[mmStyles.container, { top, right: 14, pointerEvents: 'none' }]}>
       <Text style={mmStyles.label}>MAP</Text>
       <View style={mmStyles.track} />
       {gateColor && (
@@ -501,18 +498,6 @@ export default function GameScreen() {
         </View>
       )}
 
-      {/* Minimap */}
-      {(e.status === 'playing' || e.status === 'countdown') && (
-        <MinimapPanel
-          gateY={e.gateY}
-          gateColor={e.currentGate ? GAME_COLORS[e.currentGate.color] : null}
-          playerColor={playerColorHex}
-          characterY={CHARACTER_Y}
-          screenH={SH}
-          top={insets.top + 90}
-        />
-      )}
-
       {/* Tap area */}
       <Pressable style={StyleSheet.absoluteFill} onPress={handleScreenPress} />
 
@@ -625,6 +610,18 @@ export default function GameScreen() {
             <Text style={styles.controlHint}>DOUBLE TAP</Text>
           </View>
         </View>
+      )}
+
+      {/* Minimap — rendered last so it's always on top */}
+      {(e.status === 'playing' || e.status === 'countdown') && (
+        <MinimapPanel
+          gateY={e.gateY}
+          gateColor={e.currentGate ? GAME_COLORS[e.currentGate.color] : null}
+          playerColor={playerColorHex}
+          characterY={CHARACTER_Y}
+          screenH={SH}
+          top={insets.top + 90}
+        />
       )}
 
       {/* Countdown overlay */}
