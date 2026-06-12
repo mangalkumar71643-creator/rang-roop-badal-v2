@@ -366,7 +366,8 @@ export default function SnakeShiftScreen() {
   const holdTimerRef  = useRef<ReturnType<typeof setTimeout> | null>(null);
   // Tracks last known pointer position so we derive angle from incremental movement,
   // not total displacement — prevents spinning in small circles
-  const lastTouchRef  = useRef<{ x: number; y: number } | null>(null);
+  const lastTouchRef    = useRef<{ x: number; y: number } | null>(null);
+  const grantTouchRef   = useRef<{ x: number; y: number } | null>(null); // initial press position
 
   const forceRender = useCallback(() => setTick(t => t + 1), []);
 
@@ -512,6 +513,7 @@ export default function SnakeShiftScreen() {
       isPressingRef.current = true;
       isSteering.current    = false;
       lastTouchRef.current  = { x: evt.nativeEvent.pageX, y: evt.nativeEvent.pageY };
+      grantTouchRef.current = { x: evt.nativeEvent.pageX, y: evt.nativeEvent.pageY };
       if (holdTimerRef.current) clearTimeout(holdTimerRef.current);
       holdTimerRef.current = setTimeout(() => {
         if (!isSteering.current && isPressingRef.current) {
@@ -530,7 +532,13 @@ export default function SnakeShiftScreen() {
       const ddy = cy - last.y;
       const moveDist = Math.sqrt(ddx * ddx + ddy * ddy);
       if (moveDist > 4) {
-        if (!isSteering.current) {
+        // Cancel boost timer only if total displacement from initial press > 15px
+        // so small natural finger drift doesn't kill boost during hold
+        const grant = grantTouchRef.current;
+        const totalDx = grant ? cx - grant.x : ddx;
+        const totalDy = grant ? cy - grant.y : ddy;
+        const totalDist = Math.sqrt(totalDx * totalDx + totalDy * totalDy);
+        if (!isSteering.current && totalDist > 15) {
           isSteering.current = true;
           if (holdTimerRef.current) { clearTimeout(holdTimerRef.current); holdTimerRef.current = null; }
           worldRef.current.player.isBoost = false;
