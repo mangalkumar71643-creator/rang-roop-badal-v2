@@ -58,7 +58,7 @@ const GRID_SPACING = 100;
 const TICK_MS      = 16;     // ~60 fps
 
 // ─── Game rules ──────────────────────────────────────────────────────────────
-const TOTAL_MATCH_SHAPES = 60;   // shapes to collect in match (bot starts at 1 bonus)
+const TOTAL_MATCH_SHAPES = 49;   // shapes to collect in match — first to drain pool wins
 const SHAPES_ON_FIELD    = 20;   // maintained on screen until pool runs out
 const INITIAL_BOT_SCORE  = 1;
 const SHAPE_R            = 16;  // visual radius of field items
