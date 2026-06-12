@@ -387,8 +387,9 @@ export default function SnakeShiftScreen() {
     }
 
     p.path.unshift(pNew);
-    const pStep    = Math.max(1, Math.round(SEG_GAP / p.speed));
-    const pNeeded  = (p.numSegs + 4) * pStep + 30;
+    // Always trim using NORMAL_SPEED step so boost never discards history needed by getBodyPositions
+    const pNormalStep = Math.max(1, Math.round(SEG_GAP / NORMAL_SPEED));
+    const pNeeded  = (p.numSegs + 4) * pNormalStep + 30;
     if (p.path.length > pNeeded) p.path.length = pNeeded;
 
     // ── Bot ─────────────────────────────────────────────────────────────────
@@ -405,8 +406,9 @@ export default function SnakeShiftScreen() {
     };
 
     b.path.unshift(bNew);
-    const bStep   = Math.max(1, Math.round(SEG_GAP / b.speed));
-    const bNeeded = (b.numSegs + 4) * bStep + 30;
+    // Always trim using NORMAL_SPEED step so boost never discards history needed by getBodyPositions
+    const bNormalStep = Math.max(1, Math.round(SEG_GAP / NORMAL_SPEED));
+    const bNeeded = (b.numSegs + 4) * bNormalStep + 30;
     if (b.path.length > bNeeded) b.path.length = bNeeded;
 
     // ── Bot AI (every tick: wall avoidance; every N ticks: target decision) ─
