@@ -10,7 +10,9 @@ import { LinearGradient } from 'expo-linear-gradient';
 import { router } from 'expo-router';
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
+  Animated,
   Dimensions,
+  Easing,
   PanResponder,
   Platform,
   StyleSheet,
@@ -91,7 +93,7 @@ const SHAPE_SYMBOLS: Record<GameShape, string> = {
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 interface Vec2       { x: number; y: number }
-type   GameStatus  = 'countdown' | 'playing' | 'paused' | 'dead' | 'gameover';
+type   GameStatus  = 'countdown' | 'playing' | 'paused' | 'dead' | 'gameover' | 'faceoff';
 
 interface CollectedSeg {
   shape: GameShape;
@@ -358,6 +360,313 @@ const ZONE_RINGS: ZoneRing[] = [
   {x:3500,y:2000,r:200},{x:2000,y:500,r:220},{x:2000,y:3500,r:220},
 ];
 
+// ─── FaceOff Overlay ─────────────────────────────────────────────────────────
+const FACEOFF_SEGS       = 6;
+const FACEOFF_SEG_SIZE   = 26;
+const FACEOFF_SEG_GAP    = 5;
+const FACEOFF_HEAD_SIZE  = 44;
+const FACEOFF_GAP        = 52;   // px from center line to head
+
+interface FaceOffProps {
+  playerScore: number;
+  botScore:    number;
+  snakeColor:  string;
+  onRestart:   () => void;
+  onHome:      () => void;
+}
+
+function FaceOffOverlay({ playerScore, botScore, snakeColor, onRestart, onHome }: FaceOffProps) {
+  const playerWins = playerScore > botScore;
+  const isDraw     = playerScore === botScore;
+
+  const botSlide      = useRef(new Animated.Value(-280)).current;
+  const playerSlide   = useRef(new Animated.Value(280)).current;
+  const lineOpacity   = useRef(new Animated.Value(0)).current;
+  const lineScaleX    = useRef(new Animated.Value(0)).current;
+  const loserOpacity  = useRef(new Animated.Value(1)).current;
+  const loserScale    = useRef(new Animated.Value(1)).current;
+  const flashOpacity  = useRef(new Animated.Value(0)).current;
+  const resultOpacity = useRef(new Animated.Value(0)).current;
+  const resultSlide   = useRef(new Animated.Value(30)).current;
+
+  const [phaseLabel, setPhaseLabel] = useState('');
+
+  useEffect(() => {
+    // Phase 1 — slide both snakes in + line appears
+    Animated.parallel([
+      Animated.spring(botSlide,    { toValue: 0, tension: 55, friction: 9, useNativeDriver: true }),
+      Animated.spring(playerSlide, { toValue: 0, tension: 55, friction: 9, useNativeDriver: true }),
+      Animated.timing(lineOpacity, { toValue: 1, duration: 500, useNativeDriver: true }),
+      Animated.timing(lineScaleX,  { toValue: 1, duration: 700, easing: Easing.out(Easing.exp), useNativeDriver: true }),
+    ]).start(() => {
+      // Phase 2 — staredown pause, then charge
+      setTimeout(() => {
+        if (isDraw) {
+          setPhaseLabel('DRAW!');
+          Animated.parallel([
+            Animated.timing(resultOpacity, { toValue: 1, duration: 600, useNativeDriver: true }),
+            Animated.spring(resultSlide,   { toValue: 0, tension: 60, friction: 8, useNativeDriver: true }),
+          ]).start();
+          return;
+        }
+
+        // Phase 3 — winner charges toward center
+        const winnerAnim  = playerWins ? playerSlide : botSlide;
+        const chargeValue = playerWins ? -90 : 90;
+
+        Animated.timing(winnerAnim, {
+          toValue:  chargeValue,
+          duration: 550,
+          easing:   Easing.in(Easing.quad),
+          useNativeDriver: true,
+        }).start(() => {
+          // Phase 4 — flash + loser disappears (eaten)
+          if (Platform.OS !== 'web') Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Heavy);
+
+          Animated.sequence([
+            Animated.timing(flashOpacity, { toValue: 0.9, duration: 100, useNativeDriver: true }),
+            Animated.parallel([
+              Animated.timing(flashOpacity,  { toValue: 0, duration: 350, useNativeDriver: true }),
+              Animated.timing(loserOpacity,  { toValue: 0, duration: 300, useNativeDriver: true }),
+              Animated.spring(loserScale,    { toValue: 0, tension: 120, friction: 6, useNativeDriver: true }),
+            ]),
+          ]).start(() => {
+            // Phase 5 — result
+            setPhaseLabel(playerWins ? 'YOU WIN!' : 'BOT WINS!');
+            Animated.parallel([
+              Animated.timing(resultOpacity, { toValue: 1, duration: 600, useNativeDriver: true }),
+              Animated.spring(resultSlide,   { toValue: 0, tension: 60, friction: 8, useNativeDriver: true }),
+            ]).start();
+          });
+        });
+      }, 1000);
+    });
+  }, []);
+
+  // ── Draw a snake column ──────────────────────────────────────────────────
+  // facingDown=true → head at bottom (bot), body stacks above
+  // facingDown=false → head at top (player), body stacks below
+  function renderSnakeColumn(color: string, facingDown: boolean, score: number) {
+    const bodySegs = Array.from({ length: FACEOFF_SEGS }, (_, i) => {
+      const t  = i / (FACEOFF_SEGS - 1);
+      const sz = FACEOFF_SEG_SIZE * (1 - t * 0.42);
+      const shapes = ['●', '■', '▲', '★', '⬡'];
+      return (
+        <View
+          key={i}
+          style={{
+            width: sz, height: sz, borderRadius: sz * 0.28,
+            backgroundColor: `${color}18`,
+            borderWidth: 1.5, borderColor: `${color}80`,
+            alignItems: 'center', justifyContent: 'center',
+            marginVertical: FACEOFF_SEG_GAP / 2,
+          }}
+        >
+          <Text style={{ fontSize: sz * 0.44, color, lineHeight: sz * 0.58 }}>
+            {shapes[i % shapes.length]}
+          </Text>
+        </View>
+      );
+    });
+
+    const head = (
+      <View
+        style={{
+          width: FACEOFF_HEAD_SIZE, height: FACEOFF_HEAD_SIZE,
+          borderRadius: FACEOFF_HEAD_SIZE / 2,
+          backgroundColor: `${color}22`,
+          borderWidth: 3, borderColor: color,
+          alignItems: 'center', justifyContent: 'center',
+          marginVertical: 4,
+        }}
+      >
+        <Text style={{ fontSize: 22, color: '#FFFFFF' }}>{facingDown ? '▼' : '▲'}</Text>
+      </View>
+    );
+
+    const scoreEl = (
+      <Text style={{ fontSize: 52, fontFamily: 'Inter_700Bold', color, letterSpacing: 1 }}>
+        {score}
+      </Text>
+    );
+
+    if (facingDown) {
+      // Bot: score top → body → head (head nearest center)
+      return (
+        <View style={{ alignItems: 'center' }}>
+          {scoreEl}
+          <View style={{ alignItems: 'center' }}>{bodySegs}</View>
+          {head}
+        </View>
+      );
+    } else {
+      // Player: head nearest center → body → score
+      return (
+        <View style={{ alignItems: 'center' }}>
+          {head}
+          <View style={{ alignItems: 'center' }}>{[...bodySegs].reverse()}</View>
+          {scoreEl}
+        </View>
+      );
+    }
+  }
+
+  // Which snake is the loser/winner for opacity+scale animation
+  const botIsLoser    = playerWins && !isDraw;
+  const playerIsLoser = !playerWins && !isDraw;
+
+  return (
+    <View style={foStyles.container}>
+      {/* Background tint */}
+      <LinearGradient
+        colors={['rgba(5,5,18,0.98)', 'rgba(10,5,30,0.98)', 'rgba(5,5,18,0.98)']}
+        style={StyleSheet.absoluteFill}
+      />
+
+      {/* Top half — Bot snake */}
+      <View style={foStyles.topHalf}>
+        <Animated.View
+          style={[
+            foStyles.snakeWrap,
+            { justifyContent: 'flex-end' },
+            botIsLoser
+              ? { transform: [{ translateY: botSlide }, { scale: loserScale }], opacity: loserOpacity }
+              : { transform: [{ translateY: botSlide }] },
+          ]}
+        >
+          <Text style={foStyles.snakeLabel}>BOT</Text>
+          {renderSnakeColumn(BOT_COLOR, true, botScore)}
+        </Animated.View>
+      </View>
+
+      {/* Center divider line */}
+      <Animated.View
+        style={[
+          foStyles.dividerLine,
+          { opacity: lineOpacity, transform: [{ scaleX: lineScaleX }] },
+        ]}
+      />
+      <Animated.View
+        style={[foStyles.dividerGlow, { opacity: lineOpacity, transform: [{ scaleX: lineScaleX }] }]}
+      />
+
+      {/* Bottom half — Player snake */}
+      <View style={foStyles.bottomHalf}>
+        <Animated.View
+          style={[
+            foStyles.snakeWrap,
+            { justifyContent: 'flex-start' },
+            playerIsLoser
+              ? { transform: [{ translateY: playerSlide }, { scale: loserScale }], opacity: loserOpacity }
+              : { transform: [{ translateY: playerSlide }] },
+          ]}
+        >
+          {renderSnakeColumn(snakeColor, false, playerScore)}
+          <Text style={foStyles.snakeLabel}>YOU</Text>
+        </Animated.View>
+      </View>
+
+      {/* White flash (eat moment) */}
+      <Animated.View
+        style={[StyleSheet.absoluteFill, { backgroundColor: '#FFFFFF', opacity: flashOpacity, pointerEvents: 'none' }]}
+      />
+
+      {/* Result overlay */}
+      {phaseLabel !== '' && (
+        <Animated.View
+          style={[foStyles.resultWrap, { opacity: resultOpacity, transform: [{ translateY: resultSlide }] }]}
+        >
+          <Text
+            style={[
+              foStyles.resultTitle,
+              { color: isDraw ? '#FFFFFF' : playerWins ? snakeColor : BOT_COLOR },
+            ]}
+          >
+            {phaseLabel}
+          </Text>
+          <View style={foStyles.resultBtns}>
+            <TouchableOpacity style={foStyles.primaryBtn} onPress={onRestart}>
+              <Text style={foStyles.primaryBtnText}>▶  PLAY AGAIN</Text>
+            </TouchableOpacity>
+            <TouchableOpacity style={foStyles.secondaryBtn} onPress={onHome}>
+              <Text style={foStyles.secondaryBtnText}>MAIN MENU</Text>
+            </TouchableOpacity>
+          </View>
+        </Animated.View>
+      )}
+    </View>
+  );
+}
+
+// ─── FaceOff styles ───────────────────────────────────────────────────────────
+const foStyles = StyleSheet.create({
+  container: {
+    ...StyleSheet.absoluteFillObject,
+    zIndex: 100,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  topHalf: {
+    flex: 1, width: '100%',
+    alignItems: 'center', justifyContent: 'flex-end',
+    paddingBottom: FACEOFF_GAP,
+  },
+  bottomHalf: {
+    flex: 1, width: '100%',
+    alignItems: 'center', justifyContent: 'flex-start',
+    paddingTop: FACEOFF_GAP,
+  },
+  snakeWrap: {
+    alignItems: 'center',
+  },
+  snakeLabel: {
+    fontSize: 11, fontFamily: 'Inter_700Bold',
+    color: 'rgba(255,255,255,0.40)', letterSpacing: 3,
+    marginVertical: 6,
+  },
+  dividerLine: {
+    position: 'absolute',
+    top: SH / 2 - 1,
+    left: 0, right: 0, height: 2,
+    backgroundColor: '#5E5CE6',
+  },
+  dividerGlow: {
+    position: 'absolute',
+    top: SH / 2 - 6,
+    left: 0, right: 0, height: 12,
+    backgroundColor: '#5E5CE6',
+    opacity: 0.18,
+  },
+  resultWrap: {
+    position: 'absolute',
+    alignItems: 'center',
+    gap: 18,
+    backgroundColor: 'rgba(5,5,18,0.90)',
+    borderRadius: 24,
+    paddingHorizontal: 36,
+    paddingVertical: 28,
+    borderWidth: 1.5,
+    borderColor: 'rgba(94,92,230,0.35)',
+  },
+  resultTitle: {
+    fontSize: 38, fontFamily: 'Inter_700Bold', letterSpacing: 4,
+  },
+  resultBtns: { gap: 12, width: '100%', alignItems: 'center' },
+  primaryBtn: {
+    backgroundColor: '#5E5CE6', borderRadius: 16,
+    paddingHorizontal: 40, paddingVertical: 14,
+    width: '100%', alignItems: 'center',
+  },
+  primaryBtnText: { fontSize: 16, fontFamily: 'Inter_700Bold', color: '#FFFFFF', letterSpacing: 1 },
+  secondaryBtn: {
+    backgroundColor: 'rgba(255,255,255,0.08)', borderRadius: 16,
+    paddingHorizontal: 40, paddingVertical: 14,
+    borderWidth: 1, borderColor: 'rgba(255,255,255,0.12)',
+    width: '100%', alignItems: 'center',
+  },
+  secondaryBtnText: { fontSize: 15, fontFamily: 'Inter_600SemiBold', color: '#FFFFFF', letterSpacing: 0.5 },
+});
+
 // ─── Component ───────────────────────────────────────────────────────────────
 export default function SnakeShiftScreen() {
   const insets     = useSafeAreaInsets();
@@ -483,9 +792,9 @@ export default function SnakeShiftScreen() {
       }
     }
 
-    // ── Game over: all shapes collected ─────────────────────────────────────
+    // ── Game over: all shapes collected → trigger face-off ──────────────────
     if (w.shapes.length === 0 && w.shapesSpawned >= TOTAL_MATCH_SHAPES) {
-      w.status = 'gameover';
+      w.status = 'faceoff';
       stopLoop(); forceRender(); return;
     }
 
@@ -659,8 +968,9 @@ export default function SnakeShiftScreen() {
 
   const isDead     = w.status === 'dead';
   const isGameOver = w.status === 'gameover';
+  const isFaceOff  = w.status === 'faceoff';
   const playerWins = p.score > b.score;
-  const totalEarned = p.score + b.score; // bot's 1 + collected = dynamic
+  const totalEarned = p.score + b.score;
 
   return (
     <View style={styles.root}>
@@ -1071,32 +1381,15 @@ export default function SnakeShiftScreen() {
         </View>
       )}
 
-      {/* Match-complete overlay */}
-      {isGameOver && (
-        <View style={[StyleSheet.absoluteFill, styles.dimOverlay]}>
-          <Text style={styles.overlayTitle}>
-            {playerWins ? 'YOU WIN!' : p.score === b.score ? 'DRAW!' : 'BOT WINS!'}
-          </Text>
-          <View style={styles.finalScoreRow}>
-            <View style={styles.finalScoreBox}>
-              <Text style={styles.finalScoreLabel}>YOU</Text>
-              <Text style={[styles.finalScoreNum, { color: snakeColor }]}>{p.score}</Text>
-            </View>
-            <View style={styles.finalScoreBox}>
-              <Text style={styles.finalScoreLabel}>BOT</Text>
-              <Text style={[styles.finalScoreNum, { color: BOT_COLOR }]}>{b.score}</Text>
-            </View>
-          </View>
-          <Text style={styles.totalLabel}>Total collected: {totalEarned} / 49</Text>
-          <TouchableOpacity style={styles.primaryBtn} onPress={restart}>
-            <Ionicons name="refresh" size={20} color="#FFFFFF" />
-            <Text style={styles.primaryBtnText}>PLAY AGAIN</Text>
-          </TouchableOpacity>
-          <TouchableOpacity style={styles.secondaryBtn} onPress={goHome}>
-            <Ionicons name="home-outline" size={18} color="#FFFFFF" />
-            <Text style={styles.secondaryBtnText}>MAIN MENU</Text>
-          </TouchableOpacity>
-        </View>
+      {/* Face-off sequence (replaces plain game-over overlay) */}
+      {isFaceOff && (
+        <FaceOffOverlay
+          playerScore={p.score}
+          botScore={b.score}
+          snakeColor={snakeColor}
+          onRestart={restart}
+          onHome={goHome}
+        />
       )}
     </View>
   );
