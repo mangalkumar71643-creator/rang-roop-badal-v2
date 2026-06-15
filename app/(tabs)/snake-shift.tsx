@@ -71,12 +71,12 @@ const COLLISION_DIST     = HEAD_R + BODY_R + 4;  // ~30 px
 const BOT_START_X        = 2680;
 const BOT_START_Y        = 2680;
 const BOT_INIT_ANGLE     = -(Math.PI * 0.75);  // heading up-left
-const BOT_AI_RETICK           = 45;
-const BOT_BOOST_DURATION_MIN  = 120;  // game ticks (~2 s at 60 fps)
-const BOT_BOOST_DURATION_MAX  = 180;  // game ticks (~3 s at 60 fps)
-const BOT_BOOST_COOLDOWN_MIN  = 600;  // game ticks (~10 s)
-const BOT_BOOST_COOLDOWN_MAX  = 720;  // game ticks (~12 s)
-const BOT_WALL_MARGIN         = 260;
+const BOT_AI_RETICK      = 15;   // re-steer every ~0.25 s (was 45) — tighter tracking
+const BOT_BOOST_DURATION = 420;  // 7 s at 60 fps (user: speed 7 s)
+const BOT_BOOST_COOLDOWN = 120;  // 2 s at 60 fps (user: rest 2 s)
+const BOT_WALL_MARGIN    = 260;
+const BOT_STUCK_DIST     = 40;   // must travel this many px per check or "stuck"
+const BOT_STUCK_TICKS    = 90;   // check every ~1.5 s
 const BOT_COLOR          = '#FF375F';
 
 // ─── Shape visuals ───────────────────────────────────────────────────────────
@@ -116,6 +116,9 @@ interface BotExtra {
   aiTimer:       number;  // ticks until next AI decision
   boostTimer:    number;  // remaining ticks of current boost
   boostCooldown: number;  // ticks to wait before next boost is allowed
+  stuckTimer:    number;  // ticks since last stuck-check
+  stuckCheckX:   number;  // position at last stuck-check
+  stuckCheckY:   number;
 }
 
 interface ShapeItem {
@@ -250,55 +253,67 @@ function botWallAvoid(bot: SnakeCore & BotExtra): void {
 }
 
 function runBotAI(world: World): void {
-  const bot    = world.bot;
-  const player = world.player;
-  const head   = bot.path[0];
+  const bot  = world.bot;
+  const head = bot.path[0];
 
-  // ── Wall avoidance (every tick, highest priority) ──
+  // ── Wall avoidance (highest priority, every tick) ──
   botWallAvoid(bot);
 
-  // ── Boost management (every game tick — correct timing) ──
+  // ── Boost management: 7 s ON → 2 s OFF → repeat ──
   if (bot.boostTimer > 0) {
     bot.boostTimer--;
     bot.isBoost = bot.boostTimer > 0;
     if (bot.boostTimer === 0) {
-      // Boost just ended → arm the cooldown before next boost
-      bot.boostCooldown = BOT_BOOST_COOLDOWN_MIN +
-        Math.floor(Math.random() * (BOT_BOOST_COOLDOWN_MAX - BOT_BOOST_COOLDOWN_MIN));
+      bot.boostCooldown = BOT_BOOST_COOLDOWN;
     }
   } else if (bot.boostCooldown > 0) {
     bot.boostCooldown--;
   } else {
-    // Cooldown expired → activate a short burst
-    bot.boostTimer = BOT_BOOST_DURATION_MIN +
-      Math.floor(Math.random() * (BOT_BOOST_DURATION_MAX - BOT_BOOST_DURATION_MIN));
-    bot.isBoost = true;
+    bot.boostTimer = BOT_BOOST_DURATION;
+    bot.isBoost    = true;
+  }
+
+  // ── Stuck detection: if bot barely moved, force an escape turn ──
+  bot.stuckTimer++;
+  if (bot.stuckTimer >= BOT_STUCK_TICKS) {
+    const moved = Math.hypot(head.x - bot.stuckCheckX, head.y - bot.stuckCheckY);
+    if (moved < BOT_STUCK_DIST) {
+      // Escape: turn 90° in a random direction, then let normal targeting resume
+      const escape = bot.angle + (Math.random() < 0.5 ? Math.PI * 0.6 : -Math.PI * 0.6);
+      if (!isReversal(bot.angle, escape)) bot.targetAngle = escape;
+    }
+    bot.stuckCheckX = head.x;
+    bot.stuckCheckY = head.y;
+    bot.stuckTimer  = 0;
   }
 
   // ── AI decision (every BOT_AI_RETICK ticks) ──
   bot.aiTimer--;
   if (bot.aiTimer > 0) return;
-  bot.aiTimer = BOT_AI_RETICK + Math.floor(Math.random() * 25);
+  bot.aiTimer = BOT_AI_RETICK + Math.floor(Math.random() * 8);
 
-  // Choose target based on score gap
-  const scoreDiff = bot.score - player.score;
-  let target: Vec2;
+  if (world.shapes.length === 0) return;
 
-  const nearestShape = world.shapes.reduce<ShapeItem | null>((best, s) =>
-    (!best || dist2(head, s) < dist2(head, best)) ? s : best, null);
+  // Sort shapes by distance to bot head, take top-3
+  const sorted = [...world.shapes]
+    .sort((a, b) => dist2(head, a) - dist2(head, b))
+    .slice(0, 3);
 
-  if (scoreDiff <= 0) {
-    // Bot is behind or tied → aggressively collect nearest shape
-    target = nearestShape ?? player.path[0];
-  } else if (scoreDiff === 1) {
-    // Exactly 1 ahead → mostly collect, sometimes pressure
-    target = Math.random() < 0.25 ? player.path[0] : (nearestShape ?? player.path[0]);
-  } else {
-    // 2+ ahead → can afford to chase/block player more
-    target = Math.random() < 0.45 ? player.path[0] : (nearestShape ?? player.path[0]);
-  }
+  // Weighted random pick: 65% nearest, 25% 2nd, 10% 3rd
+  // — prevents bot from always looping the same shape
+  const r    = Math.random();
+  const pick = r < 0.65
+    ? sorted[0]
+    : r < 0.90
+      ? sorted[Math.min(1, sorted.length - 1)]
+      : sorted[Math.min(2, sorted.length - 1)];
 
-  const angleToTarget = Math.atan2(target.y - head.y, target.x - head.x);
+  // Small jitter so approach angle varies every pick — avoids circling
+  const jitter = 25;
+  const tx = pick.x + (Math.random() - 0.5) * jitter;
+  const ty = pick.y + (Math.random() - 0.5) * jitter;
+
+  const angleToTarget = Math.atan2(ty - head.y, tx - head.x);
   if (!isReversal(bot.angle, angleToTarget)) bot.targetAngle = angleToTarget;
 }
 
@@ -328,7 +343,10 @@ function freshWorld(): World {
       collectedSegs: [],
       aiTimer:       BOT_AI_RETICK,
       boostTimer:    0,
-      boostCooldown: 300,  // 5 s head-start before the first bot boost
+      boostCooldown: BOT_BOOST_COOLDOWN,  // 2 s before first boost
+      stuckTimer:    0,
+      stuckCheckX:   BOT_START_X,
+      stuckCheckY:   BOT_START_Y,
     },
     shapes:        makeInitialShapes({ x: ARENA_W / 2, y: ARENA_H / 2 }),
     shapesSpawned: SHAPES_ON_FIELD,
