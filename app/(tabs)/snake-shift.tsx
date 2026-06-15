@@ -361,11 +361,8 @@ const ZONE_RINGS: ZoneRing[] = [
 ];
 
 // ─── FaceOff Overlay ─────────────────────────────────────────────────────────
-const FACEOFF_SEGS       = 6;
-const FACEOFF_SEG_SIZE   = 26;
-const FACEOFF_SEG_GAP    = 5;
-const FACEOFF_HEAD_SIZE  = 44;
-const FACEOFF_GAP        = 52;   // px from center line to head
+const FACEOFF_SEGS    = 6;
+const FACEOFF_SEG_GAP = 5;
 
 interface FaceOffProps {
   playerScore:       number;
@@ -465,68 +462,118 @@ function FaceOffOverlay({ playerScore, botScore, snakeColor, prevStreak, onResta
     });
   }, []);
 
-  // ── Draw a snake column ──────────────────────────────────────────────────
-  // facingDown=true → head at bottom (bot), body stacks above
-  // facingDown=false → head at top (player), body stacks below
+  // ── Draw a snake column — matches actual gameplay visuals exactly ──────────
+  // facingDown=true  → bot:    score → body (tail→neck) → head (nearest center, faces ↓)
+  // facingDown=false → player: head (nearest center, faces ↑) → body (neck→tail) → score
   function renderSnakeColumn(color: string, facingDown: boolean, score: number) {
-    const bodySegs = Array.from({ length: FACEOFF_SEGS }, (_, i) => {
-      const t  = i / (FACEOFF_SEGS - 1);
-      const sz = FACEOFF_SEG_SIZE * (1 - t * 0.42);
-      const shapes = ['●', '■', '▲', '★', '⬡'];
-      return (
-        <View
-          key={i}
-          style={{
-            width: sz, height: sz, borderRadius: sz * 0.28,
-            backgroundColor: `${color}18`,
-            borderWidth: 1.5, borderColor: `${color}80`,
-            alignItems: 'center', justifyContent: 'center',
-            marginVertical: FACEOFF_SEG_GAP / 2,
-          }}
-        >
-          <Text style={{ fontSize: sz * 0.44, color, lineHeight: sz * 0.58 }}>
-            {shapes[i % shapes.length]}
-          </Text>
-        </View>
-      );
-    });
+    // Angle: bot faces down toward center, player faces up toward center
+    const angle   = facingDown ? Math.PI / 2 : -Math.PI / 2;
+    const hR      = HEAD_R * 1.65;
+    const svgS    = hR * 2.6;
+    const scx     = svgS / 2, scy = svgS / 2;
+    const rotateDeg = angle * 180 / Math.PI;
 
+    const outerPts = Array.from({length:6},(_,qi)=>{const a=qi*Math.PI/3;return `${scx+hR*Math.cos(a)},${scy+hR*Math.sin(a)}`;}).join(' ');
+    const innerPts = Array.from({length:6},(_,qi)=>{const a=qi*Math.PI/3+Math.PI/6;return `${scx+hR*0.42*Math.cos(a)},${scy+hR*0.42*Math.sin(a)}`;}).join(' ');
+    const outerV = Array.from({length:6},(_,qi)=>({x:scx+hR*Math.cos(qi*Math.PI/3),y:scy+hR*Math.sin(qi*Math.PI/3)}));
+    const innerV = Array.from({length:6},(_,qi)=>({x:scx+hR*0.42*Math.cos(qi*Math.PI/3+Math.PI/6),y:scy+hR*0.42*Math.sin(qi*Math.PI/3+Math.PI/6)}));
+    const fc  = Math.cos(angle), fs = Math.sin(angle);
+    const pc2 = -Math.sin(angle), ps2 = Math.cos(angle);
+    const eDist = hR * 0.45, eSep = hR * 0.28;
+
+    // Hexagon SVG head — same as gameplay
     const head = (
-      <View
-        style={{
-          width: FACEOFF_HEAD_SIZE, height: FACEOFF_HEAD_SIZE,
-          borderRadius: FACEOFF_HEAD_SIZE / 2,
-          backgroundColor: `${color}22`,
-          borderWidth: 3, borderColor: color,
-          alignItems: 'center', justifyContent: 'center',
-          marginVertical: 4,
-        }}
-      >
-        <Text style={{ fontSize: 22, color: '#FFFFFF' }}>{facingDown ? '▼' : '▲'}</Text>
+      <View style={{ width: svgS, height: svgS }}>
+        {/* glow backdrop */}
+        <View style={{
+          position:'absolute', width:hR*3.8, height:hR*3.8, borderRadius:hR*1.9,
+          backgroundColor:color, opacity:0.10,
+          left:svgS/2-hR*1.9, top:svgS/2-hR*1.9,
+        }}/>
+        {/* hexagon with spokes */}
+        <View style={{position:'absolute', top:0, left:0, transform:[{rotate:`${rotateDeg}deg`}]}}>
+          <Svg width={svgS} height={svgS}>
+            <SvgPolygon points={outerPts} fill={`${color}18`} stroke={color} strokeWidth={2} strokeLinejoin="round"/>
+            <SvgPolygon points={innerPts} fill={`${color}10`} stroke={color} strokeWidth={1} opacity={0.7}/>
+            {outerV.map((ov,qi)=><SvgLine key={qi} x1={ov.x} y1={ov.y} x2={innerV[qi].x} y2={innerV[qi].y} stroke={color} strokeWidth={0.8} opacity={0.5}/>)}
+          </Svg>
+        </View>
+        {/* white dot eyes */}
+        <View style={{
+          position:'absolute',
+          left:svgS/2+fc*eDist+pc2*eSep-3.5, top:svgS/2+fs*eDist+ps2*eSep-3.5,
+          width:7, height:7, borderRadius:3.5, backgroundColor:'#FFFFFF',
+        }}/>
+        <View style={{
+          position:'absolute',
+          left:svgS/2+fc*eDist-pc2*eSep-3.5, top:svgS/2+fs*eDist-ps2*eSep-3.5,
+          width:7, height:7, borderRadius:3.5, backgroundColor:'#FFFFFF',
+        }}/>
       </View>
     );
 
+    // Body segments: index 0 = neck (nearest head, biggest), FACEOFF_SEGS-1 = tail (smallest)
+    const segs = Array.from({ length: FACEOFF_SEGS }, (_, i) => {
+      const t    = i / Math.max(1, FACEOFF_SEGS - 1);   // 0=neck, 1=tail
+      const sz   = Math.max(12, BODY_R * 2.5 * (1 - t * 0.44));
+      const shape = GAME_SHAPE_NAMES[i % GAME_SHAPE_NAMES.length];
+      const cr   = Math.max(4, BODY_R * 0.55 * (1 - t * 0.4));
+      return { sz, shape, cr };
+    });
+
+    // Bot layout top→bottom: tail…neck then head  → reverse segs so tail is drawn first (top)
+    // Player layout top→bottom: head then neck…tail → segs as-is
+    const orderedSegs = facingDown ? [...segs].reverse() : segs;
+
+    const bodyEls: React.ReactNode[] = [];
+    orderedSegs.forEach(({ sz, shape, cr }, idx) => {
+      bodyEls.push(
+        <View key={`seg${idx}`} style={{
+          width:sz, height:sz, borderRadius:sz*0.28,
+          backgroundColor:`${color}18`,
+          borderWidth:1.5, borderColor:`${color}80`,
+          alignItems:'center', justifyContent:'center',
+          marginVertical: FACEOFF_SEG_GAP / 2,
+        }}>
+          <Text style={{
+            fontSize:sz*0.46, color, lineHeight:sz*0.56,
+            textShadowColor:color, textShadowOffset:{width:0,height:0}, textShadowRadius:5,
+          }}>{SHAPE_SYMBOLS[shape]}</Text>
+        </View>
+      );
+      // Diamond connector between adjacent segments
+      if (idx < orderedSegs.length - 1) {
+        bodyEls.push(
+          <View key={`con${idx}`} style={{
+            width:cr*2, height:cr*2,
+            backgroundColor:`${color}28`,
+            borderWidth:1, borderColor:`${color}60`,
+            transform:[{rotate:'45deg'}],
+            marginVertical:-2,
+          }}/>
+        );
+      }
+    });
+
     const scoreEl = (
-      <Text style={{ fontSize: 52, fontFamily: 'Inter_700Bold', color, letterSpacing: 1 }}>
+      <Text style={{ fontSize: 52, fontFamily:'Inter_700Bold', color, letterSpacing:1 }}>
         {score}
       </Text>
     );
 
     if (facingDown) {
-      // Bot: score top → body → head (head nearest center)
       return (
-        <View style={{ alignItems: 'center' }}>
+        <View style={{ alignItems:'center' }}>
           {scoreEl}
-          <View style={{ alignItems: 'center' }}>{bodySegs}</View>
+          <View style={{ alignItems:'center' }}>{bodyEls}</View>
           {head}
         </View>
       );
     } else {
-      // Player: head nearest center → body → score
       return (
-        <View style={{ alignItems: 'center' }}>
+        <View style={{ alignItems:'center' }}>
           {head}
-          <View style={{ alignItems: 'center' }}>{[...bodySegs].reverse()}</View>
+          <View style={{ alignItems:'center' }}>{bodyEls}</View>
           {scoreEl}
         </View>
       );
@@ -650,12 +697,12 @@ const foStyles = StyleSheet.create({
   topHalf: {
     flex: 1, width: '100%',
     alignItems: 'center', justifyContent: 'flex-end',
-    paddingBottom: FACEOFF_GAP,
+    paddingBottom: 52,
   },
   bottomHalf: {
     flex: 1, width: '100%',
     alignItems: 'center', justifyContent: 'flex-start',
-    paddingTop: FACEOFF_GAP,
+    paddingTop: 52,
   },
   snakeWrap: {
     alignItems: 'center',
