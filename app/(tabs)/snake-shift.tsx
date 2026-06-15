@@ -368,14 +368,24 @@ const FACEOFF_HEAD_SIZE  = 44;
 const FACEOFF_GAP        = 52;   // px from center line to head
 
 interface FaceOffProps {
-  playerScore: number;
-  botScore:    number;
-  snakeColor:  string;
-  onRestart:   () => void;
-  onHome:      () => void;
+  playerScore:       number;
+  botScore:          number;
+  snakeColor:        string;
+  prevStreak:        number;
+  onRestart:         () => void;
+  onHome:            () => void;
+  onStreakUpdate:    (won: boolean) => number;
 }
 
-function FaceOffOverlay({ playerScore, botScore, snakeColor, onRestart, onHome }: FaceOffProps) {
+// Milestone bonus coins per streak level
+function streakBonus(streak: number): number {
+  if (streak === 3)  return 15;
+  if (streak === 5)  return 30;
+  if (streak === 10) return 75;
+  return 0;
+}
+
+function FaceOffOverlay({ playerScore, botScore, snakeColor, prevStreak, onRestart, onHome, onStreakUpdate }: FaceOffProps) {
   const playerWins = playerScore > botScore;
   const isDraw     = playerScore === botScore;
 
@@ -389,7 +399,9 @@ function FaceOffOverlay({ playerScore, botScore, snakeColor, onRestart, onHome }
   const resultOpacity = useRef(new Animated.Value(0)).current;
   const resultSlide   = useRef(new Animated.Value(30)).current;
 
-  const [phaseLabel, setPhaseLabel] = useState('');
+  const [phaseLabel,  setPhaseLabel]  = useState('');
+  const [newStreak,   setNewStreak]   = useState(0);
+  const streakCalced  = useRef(false);
 
   useEffect(() => {
     // Phase 1 — slide both snakes in + line appears
@@ -402,6 +414,11 @@ function FaceOffOverlay({ playerScore, botScore, snakeColor, onRestart, onHome }
       // Phase 2 — staredown pause, then charge
       setTimeout(() => {
         if (isDraw) {
+          if (!streakCalced.current) {
+            streakCalced.current = true;
+            const ns = onStreakUpdate(false);
+            setNewStreak(ns);
+          }
           setPhaseLabel('DRAW!');
           Animated.parallel([
             Animated.timing(resultOpacity, { toValue: 1, duration: 600, useNativeDriver: true }),
@@ -431,7 +448,12 @@ function FaceOffOverlay({ playerScore, botScore, snakeColor, onRestart, onHome }
               Animated.spring(loserScale,    { toValue: 0, tension: 120, friction: 6, useNativeDriver: true }),
             ]),
           ]).start(() => {
-            // Phase 5 — result
+            // Phase 5 — update streak + show result
+            if (!streakCalced.current) {
+              streakCalced.current = true;
+              const ns = onStreakUpdate(playerWins);
+              setNewStreak(ns);
+            }
             setPhaseLabel(playerWins ? 'YOU WIN!' : 'BOT WINS!');
             Animated.parallel([
               Animated.timing(resultOpacity, { toValue: 1, duration: 600, useNativeDriver: true }),
@@ -584,6 +606,25 @@ function FaceOffOverlay({ playerScore, botScore, snakeColor, onRestart, onHome }
           >
             {phaseLabel}
           </Text>
+
+          {/* Streak row */}
+          {playerWins && newStreak >= 2 && (
+            <View style={foStyles.streakRow}>
+              <Text style={foStyles.streakFire}>🔥</Text>
+              <Text style={[foStyles.streakText, { color: snakeColor }]}>
+                {newStreak} WIN STREAK
+              </Text>
+              {streakBonus(newStreak) > 0 && (
+                <View style={foStyles.bonusBadge}>
+                  <Text style={foStyles.bonusText}>+{streakBonus(newStreak)} 🪙</Text>
+                </View>
+              )}
+            </View>
+          )}
+          {!playerWins && prevStreak >= 2 && (
+            <Text style={foStyles.streakLost}>Streak lost  ({prevStreak}🔥)</Text>
+          )}
+
           <View style={foStyles.resultBtns}>
             <TouchableOpacity style={foStyles.primaryBtn} onPress={onRestart}>
               <Text style={foStyles.primaryBtnText}>▶  PLAY AGAIN</Text>
@@ -665,12 +706,31 @@ const foStyles = StyleSheet.create({
     width: '100%', alignItems: 'center',
   },
   secondaryBtnText: { fontSize: 15, fontFamily: 'Inter_600SemiBold', color: '#FFFFFF', letterSpacing: 0.5 },
+
+  streakRow: {
+    flexDirection: 'row', alignItems: 'center', gap: 6,
+    backgroundColor: 'rgba(255,255,255,0.06)',
+    borderRadius: 20, paddingHorizontal: 14, paddingVertical: 6,
+    borderWidth: 1, borderColor: 'rgba(255,200,0,0.20)',
+  },
+  streakFire: { fontSize: 20 },
+  streakText: { fontSize: 15, fontFamily: 'Inter_700Bold', letterSpacing: 1 },
+  bonusBadge: {
+    backgroundColor: 'rgba(255,200,0,0.15)', borderRadius: 12,
+    paddingHorizontal: 8, paddingVertical: 3,
+    borderWidth: 1, borderColor: 'rgba(255,200,0,0.30)',
+  },
+  bonusText: { fontSize: 12, fontFamily: 'Inter_700Bold', color: '#FFD700' },
+  streakLost: {
+    fontSize: 12, fontFamily: 'Inter_500Medium',
+    color: 'rgba(255,255,255,0.35)', letterSpacing: 0.5,
+  },
 });
 
 // ─── Component ───────────────────────────────────────────────────────────────
 export default function SnakeShiftScreen() {
   const insets     = useSafeAreaInsets();
-  const { playerData } = usePlayer();
+  const { playerData, updateSnakeWinStreak } = usePlayer();
   const character  = CHARACTERS.find(c => c.id === playerData.selectedCharacter) ?? CHARACTERS[0];
   const snakeColor = GAME_COLORS[character.defaultColor];
 
@@ -1233,6 +1293,11 @@ export default function SnakeShiftScreen() {
               </View>
             </View>
           )}
+          {playerData.snakeWinStreak >= 2 && w.status !== 'countdown' && (
+            <View style={styles.hudStreakBadge}>
+              <Text style={styles.hudStreakText}>🔥 {playerData.snakeWinStreak}</Text>
+            </View>
+          )}
         </View>
 
         <TouchableOpacity style={styles.hudBtn} onPress={goHome}
@@ -1387,8 +1452,10 @@ export default function SnakeShiftScreen() {
           playerScore={p.score}
           botScore={b.score}
           snakeColor={snakeColor}
+          prevStreak={playerData.snakeWinStreak}
           onRestart={restart}
           onHome={goHome}
+          onStreakUpdate={updateSnakeWinStreak}
         />
       )}
     </View>
@@ -1472,6 +1539,15 @@ const styles = StyleSheet.create({
   // Hint
   hintWrap: { position:'absolute', alignSelf:'center', zIndex:20 },
   hintText: { fontSize:9, fontFamily:'Inter_500Medium', color:'rgba(255,255,255,0.22)', letterSpacing:1.4 },
+
+  hudStreakBadge: {
+    flexDirection:'row', alignItems:'center',
+    backgroundColor:'rgba(255,180,0,0.12)',
+    borderRadius:12, paddingHorizontal:8, paddingVertical:2,
+    borderWidth:1, borderColor:'rgba(255,180,0,0.28)',
+    marginTop:3,
+  },
+  hudStreakText: { fontSize:11, fontFamily:'Inter_700Bold', color:'#FFD700', letterSpacing:1 },
 
   // Overlays
   overlay: { ...StyleSheet.absoluteFillObject, alignItems:'center', justifyContent:'center', backgroundColor:'rgba(5,5,18,0.72)', zIndex:30 },

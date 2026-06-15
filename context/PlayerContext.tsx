@@ -29,6 +29,7 @@ interface PlayerData {
   dailyRewardClaimed: boolean;
   dailyRewardLastClaimed: string;
   totalGamesPlayed: number;
+  snakeWinStreak: number;
 }
 
 const DEFAULT_DATA: PlayerData = {
@@ -45,6 +46,7 @@ const DEFAULT_DATA: PlayerData = {
   dailyRewardClaimed: false,
   dailyRewardLastClaimed: '',
   totalGamesPlayed: 0,
+  snakeWinStreak: 0,
 };
 
 interface PlayerContextValue {
@@ -63,6 +65,7 @@ interface PlayerContextValue {
   updateSettings: (settings: Partial<PlayerSettings>) => void;
   resetData: () => void;
   incrementGamesPlayed: () => void;
+  updateSnakeWinStreak: (won: boolean) => number;
 }
 
 const PlayerContext = createContext<PlayerContextValue | null>(null);
@@ -255,6 +258,22 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
     }));
   }, []);
 
+  const updateSnakeWinStreak = useCallback((won: boolean): number => {
+    let newStreak = 0;
+    setPlayerData((prev) => {
+      newStreak = won ? prev.snakeWinStreak + 1 : 0;
+      // Milestone coin bonuses: 3-streak=+15, 5-streak=+30, 10-streak=+75
+      let bonus = 0;
+      if (won) {
+        if (newStreak === 3)  bonus = 15;
+        if (newStreak === 5)  bonus = 30;
+        if (newStreak === 10) bonus = 75;
+      }
+      return { ...prev, snakeWinStreak: newStreak, coins: prev.coins + bonus };
+    });
+    return newStreak;
+  }, []);
+
   return (
     <PlayerContext.Provider
       value={{
@@ -273,6 +292,7 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
         updateSettings,
         resetData,
         incrementGamesPlayed,
+        updateSnakeWinStreak,
       }}
     >
       {children}
