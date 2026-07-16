@@ -109,13 +109,47 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
     return success;
   }, []);
 
-  const addStars = useCallback((amount: number) => {
-    setPlayerData((prev) => ({
-      ...prev,
-      stars: prev.stars + amount,
-      totalStarsEarned: prev.totalStarsEarned + amount,
-    }));
+  const updateAchievementProgress = useCallback((achievementId: string, progress: number) => {
+    setPlayerData((prev) => {
+      const achievement = ACHIEVEMENTS.find((a) => a.id === achievementId);
+      if (!achievement) return prev;
+
+      const existing = prev.achievements[achievementId];
+      if (existing?.unlocked) return prev;
+
+      const newProgress = Math.max(existing?.progress ?? 0, progress);
+      const shouldUnlock = newProgress >= achievement.target;
+
+      const updated: PlayerData = {
+        ...prev,
+        achievements: {
+          ...prev.achievements,
+          [achievementId]: { progress: newProgress, unlocked: shouldUnlock },
+        },
+      };
+
+      if (shouldUnlock && !existing?.unlocked) {
+        updated.coins += achievement.rewardCoins;
+        updated.stars += achievement.rewardStars;
+        updated.totalStarsEarned += achievement.rewardStars;
+      }
+
+      return updated;
+    });
   }, []);
+
+  const addStars = useCallback((amount: number) => {
+    let newTotalStarsEarned = 0;
+    setPlayerData((prev) => {
+      newTotalStarsEarned = prev.totalStarsEarned + amount;
+      return {
+        ...prev,
+        stars: prev.stars + amount,
+        totalStarsEarned: newTotalStarsEarned,
+      };
+    });
+    updateAchievementProgress('stars_50', newTotalStarsEarned);
+  }, [updateAchievementProgress]);
 
   const spendStars = useCallback((amount: number): boolean => {
     let success = false;
@@ -148,37 +182,9 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
     });
   }, []);
 
-  const updateAchievementProgress = useCallback((achievementId: string, progress: number) => {
-    setPlayerData((prev) => {
-      const achievement = ACHIEVEMENTS.find((a) => a.id === achievementId);
-      if (!achievement) return prev;
-
-      const existing = prev.achievements[achievementId];
-      if (existing?.unlocked) return prev;
-
-      const newProgress = Math.max(existing?.progress ?? 0, progress);
-      const shouldUnlock = newProgress >= achievement.target;
-
-      const updated: PlayerData = {
-        ...prev,
-        achievements: {
-          ...prev.achievements,
-          [achievementId]: { progress: newProgress, unlocked: shouldUnlock },
-        },
-      };
-
-      if (shouldUnlock && !existing?.unlocked) {
-        updated.coins += achievement.rewardCoins;
-        updated.stars += achievement.rewardStars;
-        updated.totalStarsEarned += achievement.rewardStars;
-      }
-
-      return updated;
-    });
-  }, []);
-
   const claimDailyReward = useCallback((): { coins: number; stars: number } => {
     let reward = { coins: 0, stars: 0 };
+    let newTotalStarsEarned = 0;
     setPlayerData((prev) => {
       const today = new Date().toDateString();
       if (prev.dailyRewardLastClaimed === today) return prev;
@@ -195,17 +201,19 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
       ][dayIndex];
 
       reward = { coins: c, stars: s };
+      newTotalStarsEarned = prev.totalStarsEarned + s;
       return {
         ...prev,
         coins: prev.coins + c,
         stars: prev.stars + s,
-        totalStarsEarned: prev.totalStarsEarned + s,
+        totalStarsEarned: newTotalStarsEarned,
         dailyRewardClaimed: true,
         dailyRewardLastClaimed: today,
       };
     });
+    if (reward.stars > 0) updateAchievementProgress('stars_50', newTotalStarsEarned);
     return reward;
-  }, []);
+  }, [updateAchievementProgress]);
 
   const checkAndUpdateLoginStreak = useCallback((): {
     isNew: boolean;
@@ -237,8 +245,12 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
 
       return { ...prev, lastLoginDate: today, loginStreak: newStreak };
     });
+    if (result.isNew) {
+      updateAchievementProgress('streak_3', result.streak);
+      updateAchievementProgress('streak_7', result.streak);
+    }
     return result;
-  }, []);
+  }, [updateAchievementProgress]);
 
   const updateSettings = useCallback((settings: Partial<PlayerSettings>) => {
     setPlayerData((prev) => ({
