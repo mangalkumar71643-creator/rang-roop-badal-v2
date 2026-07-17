@@ -14,6 +14,7 @@ export default function GameLayout() {
       <Stack.Screen name="settings" options={{ animation: 'slide_from_right' }} />
       <Stack.Screen name="achievements" options={{ animation: 'slide_from_right' }} />
       <Stack.Screen name="snake-shift" options={{ animation: 'none', gestureEnabled: false }} />
+      <Stack.Screen name="shape-merge" options={{ animation: 'none', gestureEnabled: false }} />
     </Stack>
   );
 }

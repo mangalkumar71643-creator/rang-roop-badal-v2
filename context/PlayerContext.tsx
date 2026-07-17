@@ -58,7 +58,7 @@ interface PlayerContextValue {
   spendStars: (amount: number) => boolean;
   unlockCharacter: (characterId: string) => void;
   selectCharacter: (characterId: string) => void;
-  updateHighScore: (mode: GameMode, score: number) => void;
+  updateHighScore: (mode: GameMode | string, score: number) => void;
   updateAchievementProgress: (achievementId: string, progress: number) => void;
   claimDailyReward: () => { coins: number; stars: number };
   checkAndUpdateLoginStreak: () => { isNew: boolean; streak: number; hasDailyReward: boolean };
@@ -174,7 +174,7 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
     setPlayerData((prev) => ({ ...prev, selectedCharacter: characterId }));
   }, []);
 
-  const updateHighScore = useCallback((mode: GameMode, score: number) => {
+  const updateHighScore = useCallback((mode: GameMode | string, score: number) => {
     setPlayerData((prev) => {
       const currentBest = prev.highScores[mode] ?? 0;
       if (score <= currentBest) return prev;

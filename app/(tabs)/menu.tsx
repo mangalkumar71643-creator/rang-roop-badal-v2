@@ -50,6 +50,13 @@ const SNAKE_SHIFT_MODE = {
   grad: ['#30D158', '#00D4FF'] as [string, string],
 };
 
+const SHAPE_MERGE_MODE = {
+  label: 'Shape Merge',
+  desc: 'Drop & match to merge shapes',
+  icon: 'shapes' as const,
+  grad: ['#FFD700', '#BF5AF2'] as [string, string],
+};
+
 export default function MenuScreen() {
   const insets = useSafeAreaInsets();
   const colors = useColors();
@@ -84,6 +91,10 @@ export default function MenuScreen() {
 
   const handleSnakeShift = () => {
     router.push('/snake-shift');
+  };
+
+  const handleShapeMerge = () => {
+    router.push('/shape-merge');
   };
 
   return (
@@ -183,6 +194,35 @@ export default function MenuScreen() {
             <View style={styles.newBadge}>
               <Text style={styles.newBadgeText}>NEW</Text>
             </View>
+            <Ionicons name="chevron-forward" size={20} color="rgba(255,255,255,0.6)" />
+          </LinearGradient>
+        </Pressable>
+
+        {/* Shape Merge */}
+        <Pressable
+          onPress={handleShapeMerge}
+          style={({ pressed }) => [styles.modeCard, pressed && styles.modeCardPressed]}
+        >
+          <LinearGradient
+            colors={SHAPE_MERGE_MODE.grad}
+            start={{ x: 0, y: 0 }}
+            end={{ x: 1, y: 1 }}
+            style={styles.modeGrad}
+          >
+            <Ionicons name={SHAPE_MERGE_MODE.icon} size={28} color="#FFFFFF" />
+            <View style={styles.modeText}>
+              <Text style={styles.modeLabel}>{SHAPE_MERGE_MODE.label}</Text>
+              <Text style={styles.modeDesc}>{SHAPE_MERGE_MODE.desc}</Text>
+            </View>
+            {playerData.highScores.shapemerge ? (
+              <View style={styles.highScoreBadge}>
+                <Text style={styles.highScoreVal}>{playerData.highScores.shapemerge}</Text>
+              </View>
+            ) : (
+              <View style={styles.newBadge}>
+                <Text style={styles.newBadgeText}>NEW</Text>
+              </View>
+            )}
             <Ionicons name="chevron-forward" size={20} color="rgba(255,255,255,0.6)" />
           </LinearGradient>
         </Pressable>
