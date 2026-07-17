@@ -1,22 +1,22 @@
 /**
  * Shape Merge
- * Drop shapes into columns. Two of the same shape stacked together merge
- * into the next shape in the chain: Circle -> Hexagon -> Square -> Triangle
- * -> Star -> MEGA burst (Star + Star clears and pays out a big bonus).
- * Chains can cascade multiple times in a single drop for combo bonuses.
+ * Physics-based drop game (Suika/watermelon-style) — no grid, no fixed
+ * cells. Shapes fall freely under gravity and pile up naturally; two
+ * touching shapes of the same tier merge into the next one in the chain:
+ * Circle -> Hexagon -> Square -> Triangle -> Star -> MEGA burst bonus.
+ * Merges can cascade in the same tick for combo bonuses.
  */
 
 import { Ionicons } from '@expo/vector-icons';
 import * as Haptics from 'expo-haptics';
 import { LinearGradient } from 'expo-linear-gradient';
 import { router } from 'expo-router';
-import React, { useCallback, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   Animated,
   Dimensions,
-  Easing,
+  PanResponder,
   Platform,
-  Pressable,
   StyleSheet,
   Text,
   TouchableOpacity,
@@ -28,28 +28,18 @@ import { ShapeRenderer } from '@/components/ShapeRenderer';
 import { GameShape } from '@/constants/gameConfig';
 import { usePlayer } from '@/context/PlayerContext';
 
-const { width: SW } = Dimensions.get('window');
+const { width: SW, height: SH } = Dimensions.get('window');
 
 const HIGH_SCORE_KEY = 'shapemerge';
 
-// ─── Grid ────────────────────────────────────────────────────────────────────
-const COLS = 5;
-const ROWS = 7;
-const GRID_PAD = 16;
-const CELL_GAP = 6;
-const CELL = (SW - GRID_PAD * 2 - CELL_GAP * (COLS - 1)) / COLS;
-const GRID_W = CELL * COLS + CELL_GAP * (COLS - 1);
-const GRID_H = CELL * ROWS + CELL_GAP * (ROWS - 1);
-const EMPTY = -1;
-
 // ─── Merge chain: Circle -> Hexagon -> Square -> Triangle -> Star -> MEGA ──
-interface Tier { shape: GameShape; color: string }
+interface Tier { shape: GameShape; color: string; radius: number }
 const TIERS: Tier[] = [
-  { shape: 'Circle',   color: '#30D158' },
-  { shape: 'Hexagon',  color: '#00D4FF' },
-  { shape: 'Square',   color: '#5E5CE6' },
-  { shape: 'Triangle', color: '#FF9500' },
-  { shape: 'Star',     color: '#FFD700' },
+  { shape: 'Circle',   color: '#30D158', radius: 20 },
+  { shape: 'Hexagon',  color: '#00D4FF', radius: 26 },
+  { shape: 'Square',   color: '#5E5CE6', radius: 33 },
+  { shape: 'Triangle', color: '#FF9500', radius: 41 },
+  { shape: 'Star',     color: '#FFD700', radius: 50 },
 ];
 const MAX_TIER = TIERS.length - 1;
 
@@ -57,15 +47,18 @@ const MEGA_SCORE = 500;
 const MEGA_COINS = 10;
 const MEGA_STARS = 1;
 
-function makeEmptyGrid(): number[][] {
-  return Array.from({ length: COLS }, () => Array(ROWS).fill(EMPTY));
-}
+// ─── Physics ────────────────────────────────────────────────────────────────
+const TICK_MS = 16;
+const GRAVITY = 0.55;
+const MAX_FALL_SPEED = 16;
+const WALL_BOUNCE = 0.3;
+const FLOOR_BOUNCE = 0.15;
+const H_DRAG = 0.90;
+const DROP_COOLDOWN_TICKS = 26;
+const DANGER_TICKS = 75; // ~1.2s sustained near the top ends the game
 
-function colHeight(col: number[]): number {
-  let h = 0;
-  while (h < ROWS && col[h] !== EMPTY) h++;
-  return h;
-}
+const PAD = 14;
+const PLAY_W = SW - PAD * 2;
 
 function tierScore(tier: number): number {
   return 20 * Math.pow(2, tier - 1);
@@ -75,173 +68,271 @@ function randomSpawnTier(): number {
   return Math.random() < 0.15 ? 1 : 0;
 }
 
-function isBoardFull(grid: number[][]): boolean {
-  return grid.every((col) => colHeight(col) >= ROWS);
-}
-
-interface MergeEvent { row: number; resultTier: number | 'mega' }
-interface DropResult {
-  grid: number[][];
-  landRow: number;
-  events: MergeEvent[];
-  scoreGained: number;
-  mega: boolean;
-}
-
-// Landed piece merges with the one below it if it matches; the result can
-// itself match the piece below THAT, cascading the chain further down —
-// this is what produces "isse aage jo hota hai" automatically.
-function resolveDrop(grid: number[][], colIdx: number, spawnTier: number): DropResult | null {
-  const col = [...grid[colIdx]];
-  const height = colHeight(col);
-  if (height >= ROWS) return null;
-
-  let curRow = height;
-  col[curRow] = spawnTier;
-  const events: MergeEvent[] = [];
-  let scoreGained = 0;
-  let mega = false;
-
-  while (curRow > 0 && col[curRow] !== EMPTY && col[curRow - 1] === col[curRow]) {
-    const tier = col[curRow];
-    col[curRow] = EMPTY;
-    if (tier + 1 > MAX_TIER) {
-      col[curRow - 1] = EMPTY;
-      events.push({ row: curRow - 1, resultTier: 'mega' });
-      scoreGained += MEGA_SCORE;
-      mega = true;
-      break;
-    }
-    col[curRow - 1] = tier + 1;
-    events.push({ row: curRow - 1, resultTier: tier + 1 });
-    scoreGained += tierScore(tier + 1);
-    curRow -= 1;
-  }
-
-  const newGrid = grid.slice();
-  newGrid[colIdx] = col;
-  return { grid: newGrid, landRow: height, events, scoreGained, mega };
-}
-
+interface PieceState { id: number; tier: number; x: number; y: number; vx: number; vy: number }
 type GStatus = 'playing' | 'gameover';
+
+interface World {
+  status: GStatus;
+  pieces: PieceState[];
+  pendingTier: number;
+  pendingX: number;
+  nextTier: number;
+  score: number;
+  bestChain: number;
+  dangerTimer: number;
+  dropCooldown: number;
+}
+
+function freshWorld(playW: number): World {
+  return {
+    status: 'playing',
+    pieces: [],
+    pendingTier: randomSpawnTier(),
+    pendingX: playW / 2,
+    nextTier: randomSpawnTier(),
+    score: 0,
+    bestChain: 0,
+    dangerTimer: 0,
+    dropCooldown: 0,
+  };
+}
 
 export default function ShapeMergeScreen() {
   const insets = useSafeAreaInsets();
   const { playerData, updateHighScore, addCoins, addStars, incrementGamesPlayed } = usePlayer();
 
-  const [grid, setGrid] = useState<number[][]>(() => makeEmptyGrid());
-  const [status, setStatus] = useState<GStatus>('playing');
-  const [score, setScore] = useState(0);
-  const [bestChain, setBestChain] = useState(0);
-  const [nextTier, setNextTier] = useState<number>(() => randomSpawnTier());
-  const [dropCol, setDropCol] = useState<number | null>(null);
-  const [dropTier, setDropTier] = useState(0);
-  const [pulseCells, setPulseCells] = useState<Set<string>>(new Set());
-  const [comboLabel, setComboLabel] = useState<{ text: string; key: number } | null>(null);
+  // Geometry computed once from safe-area insets (stable after first render).
+  const geom = useMemo(() => {
+    const playTop = insets.top + 100;
+    const playBottom = SH - insets.bottom - 50;
+    const playH = Math.max(320, playBottom - playTop);
+    return { playLeft: PAD, playTop, playH };
+  }, [insets.top, insets.bottom]);
 
-  const isDroppingRef = useRef(false);
-  const fallAnim = useRef(new Animated.Value(0)).current;
+  const [tick, setTick] = useState(0);
+  const forceRender = useCallback(() => setTick((t) => t + 1), []);
+
+  const worldRef = useRef<World>(freshWorld(PLAY_W));
+  const idRef = useRef(1);
+  const gameLoopRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const flashOpacity = useRef(new Animated.Value(0)).current;
   const comboKeyRef = useRef(0);
+  const [comboLabel, setComboLabel] = useState<{ text: string; key: number } | null>(null);
 
-  const endGame = useCallback((finalScore: number, chain: number) => {
-    setStatus('gameover');
-    incrementGamesPlayed();
-    updateHighScore(HIGH_SCORE_KEY, finalScore);
-    const coinsEarned = Math.floor(finalScore / 15);
-    const starsEarned = chain >= 2 ? Math.min(chain - 1, 3) : 0;
-    if (coinsEarned > 0) addCoins(coinsEarned);
-    if (starsEarned > 0) addStars(starsEarned);
-  }, [incrementGamesPlayed, updateHighScore, addCoins, addStars]);
-
-  const handleColumnPress = useCallback((colIdx: number) => {
-    if (status !== 'playing' || isDroppingRef.current) return;
-    const height = colHeight(grid[colIdx]);
-    if (height >= ROWS) {
-      if (Platform.OS !== 'web') Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning);
-      return;
-    }
-
-    isDroppingRef.current = true;
-    setDropTier(nextTier);
-    setDropCol(colIdx);
-    fallAnim.setValue(0);
-
-    const targetY = (ROWS - 1 - height) * (CELL + CELL_GAP);
-
-    Animated.timing(fallAnim, {
-      toValue: targetY,
-      duration: 160 + height * 14,
-      easing: Easing.in(Easing.quad),
-      useNativeDriver: true,
-    }).start(() => {
-      const spawnTier = nextTier;
-      const result = resolveDrop(grid, colIdx, spawnTier);
-      isDroppingRef.current = false;
-      setDropCol(null);
-      if (!result) return;
-
-      setGrid(result.grid);
-      setScore((s) => s + result.scoreGained);
-      setNextTier(randomSpawnTier());
-
-      if (result.events.length > 0) {
-        const chain = result.events.length;
-        setBestChain((b) => Math.max(b, chain));
-
-        const keys = new Set(
-          result.events.filter((e) => e.resultTier !== 'mega').map((e) => `${colIdx}-${e.row}`)
-        );
-        setPulseCells(keys);
-        setTimeout(() => setPulseCells(new Set()), 320);
-
-        comboKeyRef.current += 1;
-        setComboLabel({
-          text: result.mega ? 'MEGA BURST!' : chain > 1 ? `COMBO x${chain}` : 'MERGE!',
-          key: comboKeyRef.current,
-        });
-        setTimeout(() => setComboLabel(null), 700);
-
-        if (Platform.OS !== 'web') {
-          if (result.mega) Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-          else if (chain >= 3) Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Heavy);
-          else if (chain === 2) Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
-          else Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-        }
-
-        if (result.mega) {
-          addCoins(MEGA_COINS);
-          addStars(MEGA_STARS);
-          flashOpacity.setValue(0.85);
-          Animated.timing(flashOpacity, { toValue: 0, duration: 400, useNativeDriver: true }).start();
-        }
-      }
-
-      if (isBoardFull(result.grid)) {
-        endGame(score + result.scoreGained, Math.max(bestChain, result.events.length));
-      }
-    });
-  }, [grid, nextTier, status, score, bestChain, addCoins, addStars, fallAnim, flashOpacity, endGame]);
-
-  const restart = useCallback(() => {
-    isDroppingRef.current = false;
-    setGrid(makeEmptyGrid());
-    setScore(0);
-    setBestChain(0);
-    setNextTier(randomSpawnTier());
-    setStatus('playing');
-    setDropCol(null);
-    setComboLabel(null);
-    setPulseCells(new Set());
+  const stopLoop = useCallback(() => {
+    if (gameLoopRef.current) { clearInterval(gameLoopRef.current); gameLoopRef.current = null; }
   }, []);
 
-  const goHome = useCallback(() => router.replace('/menu'), []);
+  const endGame = useCallback(() => {
+    const w = worldRef.current;
+    w.status = 'gameover';
+    stopLoop();
+    incrementGamesPlayed();
+    updateHighScore(HIGH_SCORE_KEY, w.score);
+    const coinsEarned = Math.floor(w.score / 15);
+    const starsEarned = w.bestChain >= 2 ? Math.min(w.bestChain - 1, 3) : 0;
+    if (coinsEarned > 0) addCoins(coinsEarned);
+    if (starsEarned > 0) addStars(starsEarned);
+    forceRender();
+  }, [stopLoop, incrementGamesPlayed, updateHighScore, addCoins, addStars, forceRender]);
 
+  // ─── Physics tick ──────────────────────────────────────────────────────────
+  const tickFnRef = useRef<() => void>(() => {});
+  tickFnRef.current = () => {
+    const w = worldRef.current;
+    if (w.status !== 'playing') return;
+    const { playH } = geom;
+    const pieces = w.pieces;
+
+    if (w.dropCooldown > 0) w.dropCooldown--;
+
+    // Integrate gravity + motion
+    for (const p of pieces) {
+      p.vy = Math.min(p.vy + GRAVITY, MAX_FALL_SPEED);
+      p.x += p.vx;
+      p.y += p.vy;
+      p.vx *= H_DRAG;
+    }
+
+    // Walls + floor
+    for (const p of pieces) {
+      const r = TIERS[p.tier].radius;
+      if (p.x - r < 0) { p.x = r; p.vx = Math.abs(p.vx) * WALL_BOUNCE; }
+      if (p.x + r > PLAY_W) { p.x = PLAY_W - r; p.vx = -Math.abs(p.vx) * WALL_BOUNCE; }
+      if (p.y + r > playH) {
+        p.y = playH - r;
+        p.vy = p.vy > 2 ? -p.vy * FLOOR_BOUNCE : 0;
+      }
+    }
+
+    // Pairwise collisions + merge detection
+    const mergePairs: [number, number][] = [];
+    const merging = new Set<number>();
+    for (let i = 0; i < pieces.length; i++) {
+      for (let j = i + 1; j < pieces.length; j++) {
+        const a = pieces[i], b = pieces[j];
+        const ra = TIERS[a.tier].radius, rb = TIERS[b.tier].radius;
+        const dx = b.x - a.x, dy = b.y - a.y;
+        const dist = Math.hypot(dx, dy) || 0.0001;
+        const minDist = ra + rb;
+        if (dist >= minDist) continue;
+
+        if (a.tier === b.tier && !merging.has(i) && !merging.has(j)) {
+          mergePairs.push([i, j]);
+          merging.add(i); merging.add(j);
+          continue;
+        }
+
+        const overlap = minDist - dist;
+        const nx = dx / dist, ny = dy / dist;
+        const totalR = ra + rb;
+        const pushA = overlap * (rb / totalR);
+        const pushB = overlap * (ra / totalR);
+        a.x -= nx * pushA; a.y -= ny * pushA;
+        b.x += nx * pushB; b.y += ny * pushB;
+
+        const relVx = b.vx - a.vx, relVy = b.vy - a.vy;
+        const relDot = relVx * nx + relVy * ny;
+        if (relDot < 0) {
+          const impulse = -relDot * 0.5;
+          a.vx -= nx * impulse * (rb / totalR);
+          a.vy -= ny * impulse * (rb / totalR);
+          b.vx += nx * impulse * (ra / totalR);
+          b.vy += ny * impulse * (ra / totalR);
+        }
+      }
+    }
+
+    // Resolve merges
+    if (mergePairs.length > 0) {
+      const removeIdx = new Set<number>();
+      const additions: PieceState[] = [];
+      let scoreGained = 0;
+      let mega = false;
+
+      for (const [i, j] of mergePairs) {
+        const a = pieces[i], b = pieces[j];
+        removeIdx.add(i); removeIdx.add(j);
+        const tier = a.tier;
+        const mx = (a.x + b.x) / 2, my = (a.y + b.y) / 2;
+        if (tier + 1 > MAX_TIER) {
+          mega = true;
+          scoreGained += MEGA_SCORE;
+        } else {
+          additions.push({
+            id: idRef.current++,
+            tier: tier + 1,
+            x: mx, y: my,
+            vx: (a.vx + b.vx) / 2,
+            vy: Math.min(a.vy, b.vy),
+          });
+          scoreGained += tierScore(tier + 1);
+        }
+      }
+
+      w.pieces = pieces.filter((_, idx) => !removeIdx.has(idx)).concat(additions);
+      w.score += scoreGained;
+      w.bestChain = Math.max(w.bestChain, mergePairs.length);
+
+      comboKeyRef.current += 1;
+      setComboLabel({
+        text: mega ? 'MEGA BURST!' : mergePairs.length > 1 ? `COMBO x${mergePairs.length}` : 'MERGE!',
+        key: comboKeyRef.current,
+      });
+      setTimeout(() => setComboLabel(null), 650);
+
+      if (Platform.OS !== 'web') {
+        if (mega) Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+        else if (mergePairs.length >= 2) Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Heavy);
+        else Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+      }
+
+      if (mega) {
+        addCoins(MEGA_COINS);
+        addStars(MEGA_STARS);
+        flashOpacity.setValue(0.85);
+        Animated.timing(flashOpacity, { toValue: 0, duration: 400, useNativeDriver: true }).start();
+      }
+    }
+
+    // Danger line: sustained settled piece near the top ends the game
+    const dangerY = playH * 0.16;
+    const inDanger = w.pieces.some((p) => {
+      const r = TIERS[p.tier].radius;
+      return p.y - r < dangerY && Math.abs(p.vy) < 0.6 && Math.abs(p.vx) < 0.6;
+    });
+    if (inDanger) {
+      w.dangerTimer++;
+      if (w.dangerTimer > DANGER_TICKS) { endGame(); return; }
+    } else {
+      w.dangerTimer = 0;
+    }
+
+    forceRender();
+  };
+
+  useEffect(() => {
+    gameLoopRef.current = setInterval(() => tickFnRef.current(), TICK_MS);
+    return () => stopLoop();
+  }, [stopLoop]);
+
+  // ─── Touch control: drag to aim, release to drop ───────────────────────────
+  const updatePendingX = useCallback((pageX: number) => {
+    const w = worldRef.current;
+    if (w.status !== 'playing' || w.dropCooldown > 0) return;
+    const r = TIERS[w.pendingTier].radius;
+    const localX = pageX - geom.playLeft;
+    w.pendingX = Math.max(r, Math.min(PLAY_W - r, localX));
+    forceRender();
+  }, [geom.playLeft, forceRender]);
+
+  const dropPending = useCallback(() => {
+    const w = worldRef.current;
+    if (w.status !== 'playing' || w.dropCooldown > 0) return;
+    w.pieces.push({
+      id: idRef.current++,
+      tier: w.pendingTier,
+      x: w.pendingX,
+      y: TIERS[w.pendingTier].radius + 2,
+      vx: 0,
+      vy: 0,
+    });
+    w.pendingTier = w.nextTier;
+    w.nextTier = randomSpawnTier();
+    w.dropCooldown = DROP_COOLDOWN_TICKS;
+    if (Platform.OS !== 'web') Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    forceRender();
+  }, [forceRender]);
+
+  const panResponder = useMemo(() => PanResponder.create({
+    onStartShouldSetPanResponder: () => worldRef.current.status === 'playing' && worldRef.current.dropCooldown <= 0,
+    onMoveShouldSetPanResponder: () => worldRef.current.status === 'playing' && worldRef.current.dropCooldown <= 0,
+    onPanResponderGrant: (evt) => updatePendingX(evt.nativeEvent.pageX),
+    onPanResponderMove: (evt) => updatePendingX(evt.nativeEvent.pageX),
+    onPanResponderRelease: () => dropPending(),
+    onPanResponderTerminate: () => dropPending(),
+  }), [updatePendingX, dropPending]);
+
+  const restart = useCallback(() => {
+    stopLoop();
+    worldRef.current = freshWorld(PLAY_W);
+    gameLoopRef.current = setInterval(() => tickFnRef.current(), TICK_MS);
+    forceRender();
+  }, [stopLoop, forceRender]);
+
+  const goHome = useCallback(() => { stopLoop(); router.replace('/menu'); }, [stopLoop]);
+
+  const w = worldRef.current;
   const bestScore = playerData.highScores[HIGH_SCORE_KEY] ?? 0;
+  const pendingR = TIERS[w.pendingTier].radius;
+  const pendingY = geom.playTop - pendingR - 10;
 
   return (
     <View style={styles.root}>
       <LinearGradient colors={['#070714', '#0D0D28', '#070714']} style={StyleSheet.absoluteFill} />
+
+      {/* Full-screen gesture layer */}
+      <View style={StyleSheet.absoluteFill} {...panResponder.panHandlers} />
 
       {/* Mega burst flash */}
       <Animated.View
@@ -250,22 +341,22 @@ export default function ShapeMergeScreen() {
       />
 
       {/* HUD */}
-      <View style={[styles.hud, { paddingTop: insets.top + 6 }]}>
+      <View style={[styles.hud, { paddingTop: insets.top + 6 }]} pointerEvents="box-none">
         <TouchableOpacity style={styles.hudBtn} onPress={goHome} hitSlop={{ top: 10, left: 10, right: 10, bottom: 10 }}>
           <Ionicons name="home-outline" size={16} color="rgba(255,255,255,0.55)" />
         </TouchableOpacity>
         <View style={styles.hudCenter}>
           <Text style={styles.modeLabel}>SHAPE MERGE</Text>
-          <Text style={styles.scoreNum}>{score}</Text>
+          <Text style={styles.scoreNum}>{w.score}</Text>
         </View>
         <View style={styles.nextBadge}>
           <Text style={styles.nextLabel}>NEXT</Text>
-          <ShapeRenderer shape={TIERS[nextTier].shape} color={TIERS[nextTier].color} size={20} />
+          <ShapeRenderer shape={TIERS[w.nextTier].shape} color={TIERS[w.nextTier].color} size={20} />
         </View>
       </View>
 
       {bestScore > 0 && (
-        <Text style={styles.bestLine}>BEST {bestScore}</Text>
+        <Text style={styles.bestLine} pointerEvents="none">BEST {bestScore}</Text>
       )}
 
       {/* Combo label */}
@@ -275,76 +366,68 @@ export default function ShapeMergeScreen() {
         </View>
       )}
 
-      {/* Grid */}
-      <View style={styles.playArea}>
-        <View style={{ width: GRID_W, height: GRID_H }}>
-          <View style={styles.gridFrame} />
-
-          {/* Landed shapes */}
-          {grid.map((col, c) => (
-            <View
-              key={c}
-              style={{ position: 'absolute', left: c * (CELL + CELL_GAP), top: 0, width: CELL, height: GRID_H, zIndex: 1 }}
-            >
-              {Array.from({ length: ROWS }, (_, r) => {
-                const tier = col[r];
-                const top = (ROWS - 1 - r) * (CELL + CELL_GAP);
-                const pulsing = pulseCells.has(`${c}-${r}`);
-                return (
-                  <View
-                    key={r}
-                    style={{ position: 'absolute', left: 0, top, width: CELL, height: CELL, alignItems: 'center', justifyContent: 'center' }}
-                  >
-                    <View style={styles.cellBg} />
-                    {tier !== EMPTY && (
-                      <View style={[styles.cellShapeWrap, pulsing && styles.cellShapePulse]}>
-                        <ShapeRenderer shape={TIERS[tier].shape} color={TIERS[tier].color} size={CELL * 0.76} />
-                      </View>
-                    )}
-                  </View>
-                );
-              })}
-            </View>
-          ))}
-
-          {/* Falling piece */}
-          {dropCol !== null && (
-            <Animated.View
-              style={{
-                position: 'absolute',
-                left: dropCol * (CELL + CELL_GAP),
-                top: 0,
-                width: CELL,
-                height: CELL,
-                alignItems: 'center',
-                justifyContent: 'center',
-                zIndex: 5,
-                transform: [{ translateY: fallAnim }],
-              }}
-            >
-              <ShapeRenderer shape={TIERS[dropTier].shape} color={TIERS[dropTier].color} size={CELL * 0.76} />
-            </Animated.View>
-          )}
-
-          {/* Column tap targets */}
-          {Array.from({ length: COLS }, (_, c) => (
-            <Pressable
-              key={`tap${c}`}
-              onPress={() => handleColumnPress(c)}
-              style={{ position: 'absolute', left: c * (CELL + CELL_GAP), top: 0, width: CELL, height: GRID_H, zIndex: 10 }}
-            />
-          ))}
-        </View>
+      {/* Open jar (no grid, no cells) */}
+      <View
+        style={[styles.jar, { left: geom.playLeft, top: geom.playTop, width: PLAY_W, height: geom.playH }]}
+        pointerEvents="none"
+      >
+        <View style={styles.dangerLine} />
       </View>
 
-      <Text style={styles.hint}>TAP A COLUMN TO DROP · MATCH SHAPES TO MERGE</Text>
+      {/* Aim guide */}
+      <View
+        style={[styles.aimLine, {
+          left: geom.playLeft + w.pendingX,
+          top: pendingY + pendingR,
+          height: Math.max(0, geom.playTop - (pendingY + pendingR)),
+        }]}
+        pointerEvents="none"
+      />
+
+      {/* Pending piece */}
+      <View
+        style={{
+          position: 'absolute',
+          left: geom.playLeft + w.pendingX - pendingR,
+          top: pendingY - pendingR,
+          width: pendingR * 2,
+          height: pendingR * 2,
+        }}
+        pointerEvents="none"
+      >
+        <ShapeRenderer shape={TIERS[w.pendingTier].shape} color={TIERS[w.pendingTier].color} size={pendingR * 2} />
+      </View>
+
+      {/* Falling / settled pieces */}
+      {w.pieces.map((p) => {
+        const r = TIERS[p.tier].radius;
+        return (
+          <View
+            key={p.id}
+            style={{
+              position: 'absolute',
+              left: geom.playLeft + p.x - r,
+              top: geom.playTop + p.y - r,
+              width: r * 2,
+              height: r * 2,
+            }}
+            pointerEvents="none"
+          >
+            <ShapeRenderer shape={TIERS[p.tier].shape} color={TIERS[p.tier].color} size={r * 2} />
+          </View>
+        );
+      })}
+
+      <Text style={[styles.hint, { top: geom.playTop + geom.playH + 10 }]} pointerEvents="none">
+        DRAG TO AIM · RELEASE TO DROP
+      </Text>
 
       {/* Game over overlay */}
-      {status === 'gameover' && (
+      {w.status === 'gameover' && (
         <View style={[StyleSheet.absoluteFill, styles.dimOverlay]}>
-          <Text style={styles.overlayTitle}>BOARD FULL!</Text>
-          <Text style={styles.finalScore}>{score}</Text>
-          {bestScore > 0 && <Text style={styles.bestScoreText}>BEST {Math.max(bestScore, score)}</Text>}
+          <Text style={styles.overlayTitle}>JAR FULL!</Text>
+          <Text style={styles.finalScore}>{w.score}</Text>
+          {bestScore > 0 && <Text style={styles.bestScoreText}>BEST {Math.max(bestScore, w.score)}</Text>}
           <TouchableOpacity style={styles.primaryBtn} onPress={restart}>
             <Ionicons name="refresh" size={20} color="#070714" />
             <Text style={styles.primaryBtnText}>TRY AGAIN</Text>
@@ -387,11 +470,11 @@ const styles = StyleSheet.create({
   nextLabel: { fontSize: 8, fontFamily: 'Inter_600SemiBold', color: '#5555AA', letterSpacing: 1 },
   bestLine: {
     textAlign: 'center', fontSize: 11, fontFamily: 'Inter_500Medium',
-    color: '#5555AA', letterSpacing: 1, marginBottom: 4,
+    color: '#5555AA', letterSpacing: 1, marginTop: -4,
   },
 
   comboWrap: {
-    position: 'absolute', top: '30%', left: 0, right: 0,
+    position: 'absolute', top: '32%', left: 0, right: 0,
     alignItems: 'center', zIndex: 15,
   },
   comboText: {
@@ -400,23 +483,31 @@ const styles = StyleSheet.create({
     textShadowColor: '#FF9500', textShadowOffset: { width: 0, height: 0 }, textShadowRadius: 14,
   },
 
-  playArea: { flex: 1, alignItems: 'center', justifyContent: 'center' },
-  gridFrame: {
-    position: 'absolute', inset: 0,
-    borderRadius: 16, borderWidth: 1.5, borderColor: 'rgba(94,92,230,0.25)',
-    backgroundColor: 'rgba(255,255,255,0.02)',
+  jar: {
+    position: 'absolute',
+    borderRadius: 18,
+    borderWidth: 1.5,
+    borderColor: 'rgba(94,92,230,0.28)',
+    backgroundColor: 'rgba(255,255,255,0.015)',
+    overflow: 'hidden',
   },
-  cellBg: {
-    position: 'absolute', width: CELL - 4, height: CELL - 4, borderRadius: 10,
-    backgroundColor: 'rgba(255,255,255,0.03)',
-    borderWidth: 1, borderColor: 'rgba(255,255,255,0.05)',
+  dangerLine: {
+    position: 'absolute',
+    left: 0, right: 0, top: '16%',
+    height: 1.5,
+    backgroundColor: 'rgba(255,45,120,0.35)',
+    borderStyle: 'dashed',
   },
-  cellShapeWrap: { alignItems: 'center', justifyContent: 'center' },
-  cellShapePulse: { transform: [{ scale: 1.18 }] },
+  aimLine: {
+    position: 'absolute',
+    width: 1,
+    backgroundColor: 'rgba(255,255,255,0.15)',
+  },
 
   hint: {
+    position: 'absolute', left: 0, right: 0,
     textAlign: 'center', fontSize: 10, fontFamily: 'Inter_500Medium',
-    color: 'rgba(255,255,255,0.25)', letterSpacing: 1, marginBottom: 18,
+    color: 'rgba(255,255,255,0.25)', letterSpacing: 1,
   },
 
   dimOverlay: {
