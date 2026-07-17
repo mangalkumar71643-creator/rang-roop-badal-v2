@@ -36,14 +36,22 @@ const HIGH_SCORE_KEY = 'shapemerge';
 // ─── Merge chain: Circle -> Hexagon -> Square -> Triangle -> Star -> MEGA ──
 // Star + Star forms a MEGA piece (still a real shape on the board) instead
 // of vanishing; only MEGA + MEGA is the true terminal burst.
-interface Tier { shape: GameShape; color: string; radius: number }
+//
+// `radius` drives physics (position, gravity, collision) — never changes.
+// `visualScale` only enlarges the drawn shape around that same center point.
+// Triangle/Star/Hexagon are "pointier" than their bounding circle (a
+// triangle's apex and a star's inner notches sit well inside the circle
+// two touching pieces collide at), so without this two physically-touching
+// shapes can render with a visible gap between them, looking like one is
+// floating. Scaling the artwork up compensates without changing gameplay.
+interface Tier { shape: GameShape; color: string; radius: number; visualScale?: number }
 const TIERS: Tier[] = [
   { shape: 'Circle',   color: '#30D158', radius: 20 },
-  { shape: 'Hexagon',  color: '#00D4FF', radius: 26 },
+  { shape: 'Hexagon',  color: '#00D4FF', radius: 26, visualScale: 1.10 },
   { shape: 'Square',   color: '#5E5CE6', radius: 33 },
-  { shape: 'Triangle', color: '#FF9500', radius: 41 },
-  { shape: 'Star',     color: '#FFD700', radius: 50 },
-  { shape: 'Star',     color: '#FF3DF2', radius: 60 }, // MEGA — bigger, distinct glow
+  { shape: 'Triangle', color: '#FF9500', radius: 41, visualScale: 1.35 },
+  { shape: 'Star',     color: '#FFD700', radius: 50, visualScale: 1.28 },
+  { shape: 'Star',     color: '#FF3DF2', radius: 60, visualScale: 1.28 }, // MEGA — bigger, distinct glow
 ];
 const MAX_TIER = TIERS.length - 1;
 
@@ -375,6 +383,7 @@ export default function ShapeMergeScreen() {
   const w = worldRef.current;
   const bestScore = playerData.highScores[HIGH_SCORE_KEY] ?? 0;
   const pendingR = TIERS[w.pendingTier].radius;
+  const pendingVisR = pendingR * (TIERS[w.pendingTier].visualScale ?? 1);
   const pendingY = geom.playTop - pendingR - 10;
 
   return (
@@ -468,29 +477,30 @@ export default function ShapeMergeScreen() {
       <View
         style={{
           position: 'absolute',
-          left: geom.playLeft + w.pendingX - pendingR,
-          top: pendingY - pendingR,
-          width: pendingR * 2,
-          height: pendingR * 2,
+          left: geom.playLeft + w.pendingX - pendingVisR,
+          top: pendingY - pendingVisR,
+          width: pendingVisR * 2,
+          height: pendingVisR * 2,
         }}
         pointerEvents="none"
       >
-        <ShapeRenderer shape={TIERS[w.pendingTier].shape} color={TIERS[w.pendingTier].color} size={pendingR * 2} />
+        <ShapeRenderer shape={TIERS[w.pendingTier].shape} color={TIERS[w.pendingTier].color} size={pendingVisR * 2} />
       </View>
 
       {/* Falling / settled pieces */}
       {w.pieces.map((p) => {
         const r = TIERS[p.tier].radius;
-        const isMega = p.tier === MAX_TIER - 1;
+        const visR = r * (TIERS[p.tier].visualScale ?? 1);
+        const isMega = p.tier === MAX_TIER;
         return (
           <View
             key={p.id}
             style={{
               position: 'absolute',
-              left: geom.playLeft + p.x - r,
-              top: geom.playTop + p.y - r,
-              width: r * 2,
-              height: r * 2,
+              left: geom.playLeft + p.x - visR,
+              top: geom.playTop + p.y - visR,
+              width: visR * 2,
+              height: visR * 2,
               alignItems: 'center',
               justifyContent: 'center',
             }}
@@ -503,7 +513,7 @@ export default function ShapeMergeScreen() {
                 backgroundColor: TIERS[p.tier].color, opacity: 0.22,
               }} />
             )}
-            <ShapeRenderer shape={TIERS[p.tier].shape} color={TIERS[p.tier].color} size={r * 2} />
+            <ShapeRenderer shape={TIERS[p.tier].shape} color={TIERS[p.tier].color} size={visR * 2} />
           </View>
         );
       })}
