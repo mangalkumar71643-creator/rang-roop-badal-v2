@@ -57,6 +57,15 @@ const TERMINAL_BURST_SCORE = 800;
 const TERMINAL_BURST_COINS = 15;
 const TERMINAL_BURST_STARS = 2;
 
+// ─── Win condition ──────────────────────────────────────────────────────────
+// Beat this score before the clock runs out. 2500 needs real strategy —
+// deliberately stacking same-tier shapes for cascades — not just passive
+// auto-drop clicking, which realistically only nets a few hundred points.
+const MATCH_SECONDS = 300; // 5 minutes
+const TARGET_SCORE = 2500;
+const WIN_BONUS_COINS = 50;
+const WIN_BONUS_STARS = 5;
+
 // ─── Physics ────────────────────────────────────────────────────────────────
 const TICK_MS = 16;
 const GRAVITY = 0.55;
@@ -91,11 +100,19 @@ function randomAutoDropTicks(): number {
   return AUTO_DROP_TICKS;
 }
 
+function formatTime(seconds: number): string {
+  const m = Math.floor(Math.max(0, seconds) / 60);
+  const s = Math.max(0, seconds) % 60;
+  return `${m}:${s.toString().padStart(2, '0')}`;
+}
+
 interface PieceState { id: number; tier: number; x: number; y: number; vx: number; vy: number }
-type GStatus = 'playing' | 'gameover';
+type GStatus = 'playing' | 'win' | 'gameover';
+type EndReason = 'full' | 'time' | null;
 
 interface World {
   status: GStatus;
+  endReason: EndReason;
   pieces: PieceState[];
   pendingTier: number;
   pendingX: number;
@@ -106,12 +123,14 @@ interface World {
   dropCooldown: number;
   autoDropTimer: number;
   autoDropTotal: number;
+  timeLeft: number;
 }
 
 function freshWorld(playW: number): World {
   const autoDropTotal = randomAutoDropTicks();
   return {
     status: 'playing',
+    endReason: null,
     pieces: [],
     pendingTier: randomSpawnTier(),
     pendingX: playW / 2,
@@ -122,6 +141,7 @@ function freshWorld(playW: number): World {
     dropCooldown: 0,
     autoDropTimer: autoDropTotal,
     autoDropTotal,
+    timeLeft: MATCH_SECONDS,
   };
 }
 
@@ -161,17 +181,20 @@ export default function ShapeMergeScreen() {
   const worldRef = useRef<World>(freshWorld(PLAY_W));
   const idRef = useRef(1);
   const gameLoopRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const flashOpacity = useRef(new Animated.Value(0)).current;
   const comboKeyRef = useRef(0);
   const [comboLabel, setComboLabel] = useState<{ text: string; key: number } | null>(null);
 
   const stopLoop = useCallback(() => {
     if (gameLoopRef.current) { clearInterval(gameLoopRef.current); gameLoopRef.current = null; }
+    if (timerRef.current) { clearInterval(timerRef.current); timerRef.current = null; }
   }, []);
 
-  const endGame = useCallback(() => {
+  const endGame = useCallback((reason: 'full' | 'time') => {
     const w = worldRef.current;
     w.status = 'gameover';
+    w.endReason = reason;
     stopLoop();
     incrementGamesPlayed();
     updateHighScore(HIGH_SCORE_KEY, w.score);
@@ -179,6 +202,20 @@ export default function ShapeMergeScreen() {
     const starsEarned = w.bestChain >= 2 ? Math.min(w.bestChain - 1, 3) : 0;
     if (coinsEarned > 0) addCoins(coinsEarned);
     if (starsEarned > 0) addStars(starsEarned);
+    forceRender();
+  }, [stopLoop, incrementGamesPlayed, updateHighScore, addCoins, addStars, forceRender]);
+
+  const winGame = useCallback(() => {
+    const w = worldRef.current;
+    w.status = 'win';
+    stopLoop();
+    incrementGamesPlayed();
+    updateHighScore(HIGH_SCORE_KEY, w.score);
+    const coinsEarned = Math.floor(w.score / 15) + WIN_BONUS_COINS;
+    const starsEarned = (w.bestChain >= 2 ? Math.min(w.bestChain - 1, 3) : 0) + WIN_BONUS_STARS;
+    addCoins(coinsEarned);
+    addStars(starsEarned);
+    if (Platform.OS !== 'web') Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
     forceRender();
   }, [stopLoop, incrementGamesPlayed, updateHighScore, addCoins, addStars, forceRender]);
 
@@ -315,6 +352,9 @@ export default function ShapeMergeScreen() {
         flashOpacity.setValue(0.5);
         Animated.timing(flashOpacity, { toValue: 0, duration: 350, useNativeDriver: true }).start();
       }
+
+      // Hit the target score before time runs out — instant win.
+      if (w.score >= TARGET_SCORE) { winGame(); return; }
     }
 
     // Danger line: sustained settled piece near the top ends the game
@@ -325,7 +365,7 @@ export default function ShapeMergeScreen() {
     });
     if (inDanger) {
       w.dangerTimer++;
-      if (w.dangerTimer > DANGER_TICKS) { endGame(); return; }
+      if (w.dangerTimer > DANGER_TICKS) { endGame('full'); return; }
     } else {
       w.dangerTimer = 0;
     }
@@ -333,10 +373,21 @@ export default function ShapeMergeScreen() {
     forceRender();
   };
 
-  useEffect(() => {
+  const startLoops = useCallback(() => {
     gameLoopRef.current = setInterval(() => tickFnRef.current(), TICK_MS);
+    timerRef.current = setInterval(() => {
+      const w = worldRef.current;
+      if (w.status !== 'playing') return;
+      w.timeLeft--;
+      if (w.timeLeft <= 0) { endGame('time'); return; }
+      forceRender();
+    }, 1000);
+  }, [endGame, forceRender]);
+
+  useEffect(() => {
+    startLoops();
     return () => stopLoop();
-  }, [stopLoop]);
+  }, [startLoops, stopLoop]);
 
   // ─── Touch control: drag to aim, release to drop ───────────────────────────
   const updatePendingX = useCallback((pageX: number) => {
@@ -368,9 +419,9 @@ export default function ShapeMergeScreen() {
   const restart = useCallback(() => {
     stopLoop();
     worldRef.current = freshWorld(PLAY_W);
-    gameLoopRef.current = setInterval(() => tickFnRef.current(), TICK_MS);
+    startLoops();
     forceRender();
-  }, [stopLoop, forceRender]);
+  }, [stopLoop, startLoops, forceRender]);
 
   const goHome = useCallback(() => { stopLoop(); router.replace('/menu'); }, [stopLoop]);
 
@@ -405,6 +456,17 @@ export default function ShapeMergeScreen() {
           <Text style={styles.nextLabel}>NEXT</Text>
           <ShapeRenderer shape={TIERS[w.nextTier].shape} color={TIERS[w.nextTier].color} size={20} />
         </View>
+      </View>
+
+      {/* Match timer + target score progress */}
+      <View style={styles.progressRow} pointerEvents="none">
+        <Text style={[styles.timerText, w.timeLeft <= 30 && styles.timerUrgent]}>
+          {formatTime(w.timeLeft)}
+        </Text>
+        <View style={styles.targetBarTrack}>
+          <View style={[styles.targetBarFill, { width: `${Math.min(100, (w.score / TARGET_SCORE) * 100)}%` }]} />
+        </View>
+        <Text style={styles.targetText}>🎯{TARGET_SCORE}</Text>
       </View>
 
       {bestScore > 0 && (
@@ -514,11 +576,29 @@ export default function ShapeMergeScreen() {
         DRAG TO AIM · RELEASE TO DROP
       </Text>
 
+      {/* Win overlay */}
+      {w.status === 'win' && (
+        <View style={[StyleSheet.absoluteFill, styles.dimOverlay]}>
+          <Text style={[styles.overlayTitle, styles.winTitle]}>TARGET HIT!</Text>
+          <Text style={[styles.finalScore, styles.winScore]}>{w.score}</Text>
+          <Text style={styles.bestScoreText}>+{WIN_BONUS_COINS} 🪙  +{WIN_BONUS_STARS} ⭐ BONUS</Text>
+          <TouchableOpacity style={styles.primaryBtn} onPress={restart}>
+            <Ionicons name="refresh" size={20} color="#070714" />
+            <Text style={styles.primaryBtnText}>PLAY AGAIN</Text>
+          </TouchableOpacity>
+          <TouchableOpacity style={styles.secondaryBtn} onPress={goHome}>
+            <Ionicons name="home-outline" size={18} color="#FFFFFF" />
+            <Text style={styles.secondaryBtnText}>MAIN MENU</Text>
+          </TouchableOpacity>
+        </View>
+      )}
+
       {/* Game over overlay */}
       {w.status === 'gameover' && (
         <View style={[StyleSheet.absoluteFill, styles.dimOverlay]}>
-          <Text style={styles.overlayTitle}>JAR FULL!</Text>
+          <Text style={styles.overlayTitle}>{w.endReason === 'time' ? "TIME'S UP!" : 'JAR FULL!'}</Text>
           <Text style={styles.finalScore}>{w.score}</Text>
+          <Text style={styles.bestScoreText}>TARGET WAS {TARGET_SCORE}</Text>
           {bestScore > 0 && <Text style={styles.bestScoreText}>BEST {Math.max(bestScore, w.score)}</Text>}
           <TouchableOpacity style={styles.primaryBtn} onPress={restart}>
             <Ionicons name="refresh" size={20} color="#070714" />
@@ -565,6 +645,19 @@ const styles = StyleSheet.create({
     color: '#5555AA', letterSpacing: 1, marginTop: -4,
   },
 
+  progressRow: {
+    flexDirection: 'row', alignItems: 'center', gap: 8,
+    paddingHorizontal: 20, marginTop: 4, marginBottom: 6,
+  },
+  timerText: { fontSize: 12, fontFamily: 'Inter_700Bold', color: '#00D4FF', letterSpacing: 1, minWidth: 34 },
+  timerUrgent: { color: '#FF2D78' },
+  targetBarTrack: {
+    flex: 1, height: 5, borderRadius: 3,
+    backgroundColor: 'rgba(255,255,255,0.08)', overflow: 'hidden',
+  },
+  targetBarFill: { height: '100%', borderRadius: 3, backgroundColor: '#FFD700' },
+  targetText: { fontSize: 11, fontFamily: 'Inter_600SemiBold', color: '#FFD700', letterSpacing: 0.5 },
+
   comboWrap: {
     position: 'absolute', top: '32%', left: 0, right: 0,
     alignItems: 'center', zIndex: 15,
@@ -607,10 +700,15 @@ const styles = StyleSheet.create({
     gap: 14, zIndex: 50,
   },
   overlayTitle: { fontSize: 28, fontFamily: 'Inter_700Bold', color: '#FFFFFF', letterSpacing: 3 },
+  winTitle: {
+    color: '#FFD700',
+    textShadowColor: '#FFD700', textShadowOffset: { width: 0, height: 0 }, textShadowRadius: 20,
+  },
   finalScore: {
     fontSize: 56, fontFamily: 'Inter_700Bold', color: '#FFD700',
     textShadowColor: '#FF9500', textShadowOffset: { width: 0, height: 0 }, textShadowRadius: 18,
   },
+  winScore: { color: '#00E87A', textShadowColor: '#00E87A' },
   bestScoreText: { fontSize: 13, fontFamily: 'Inter_600SemiBold', color: '#5555AA', letterSpacing: 1, marginBottom: 4 },
 
   primaryBtn: {
