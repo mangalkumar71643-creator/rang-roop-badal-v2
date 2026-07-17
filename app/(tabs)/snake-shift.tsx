@@ -410,6 +410,7 @@ function FaceOffOverlay({ playerScore, botScore, snakeColor, prevStreak, onResta
   const lineScaleX    = useRef(new Animated.Value(0)).current;
   const loserOpacity  = useRef(new Animated.Value(1)).current;
   const loserScale    = useRef(new Animated.Value(1)).current;
+  const winnerChomp   = useRef(new Animated.Value(1)).current;
   const flashOpacity  = useRef(new Animated.Value(0)).current;
   const resultOpacity = useRef(new Animated.Value(0)).current;
   const resultSlide   = useRef(new Animated.Value(30)).current;
@@ -452,18 +453,30 @@ function FaceOffOverlay({ playerScore, botScore, snakeColor, prevStreak, onResta
           easing:   Easing.in(Easing.quad),
           useNativeDriver: true,
         }).start(() => {
-          // Phase 4 — flash + loser disappears (eaten)
-          if (Platform.OS !== 'web') Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Heavy);
+          // Phase 4 — bite: winner punches a chomp scale, loser gets pulled
+          // in and swallowed (dragged further toward center while it
+          // shrinks/fades) instead of just vanishing in place
+          if (Platform.OS !== 'web') Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+
+          const loserAnim      = playerWins ? botSlide : playerSlide;
+          const loserPullValue = playerWins ? 40 : -40;
 
           Animated.sequence([
-            Animated.timing(flashOpacity, { toValue: 0.9, duration: 100, useNativeDriver: true }),
+            Animated.timing(winnerChomp, { toValue: 1.22, duration: 110, easing: Easing.out(Easing.quad), useNativeDriver: true }),
+            Animated.spring(winnerChomp, { toValue: 1, tension: 200, friction: 7, useNativeDriver: true }),
+          ]).start();
+
+          Animated.sequence([
+            Animated.timing(flashOpacity, { toValue: 0.9, duration: 90, useNativeDriver: true }),
             Animated.parallel([
-              Animated.timing(flashOpacity,  { toValue: 0, duration: 350, useNativeDriver: true }),
-              Animated.timing(loserOpacity,  { toValue: 0, duration: 300, useNativeDriver: true }),
-              Animated.spring(loserScale,    { toValue: 0, tension: 120, friction: 6, useNativeDriver: true }),
+              Animated.timing(flashOpacity, { toValue: 0, duration: 380, useNativeDriver: true }),
+              Animated.timing(loserAnim,    { toValue: loserPullValue, duration: 420, easing: Easing.in(Easing.quad), useNativeDriver: true }),
+              Animated.timing(loserOpacity, { toValue: 0, duration: 380, useNativeDriver: true }),
+              Animated.spring(loserScale,   { toValue: 0, tension: 90, friction: 7, useNativeDriver: true }),
             ]),
           ]).start(() => {
             // Phase 5 — update streak + show result
+            if (Platform.OS !== 'web') Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
             if (!streakCalced.current) {
               streakCalced.current = true;
               const ns = onStreakUpdate(playerWins);
@@ -599,8 +612,10 @@ function FaceOffOverlay({ playerScore, botScore, snakeColor, prevStreak, onResta
   }
 
   // Which snake is the loser/winner for opacity+scale animation
-  const botIsLoser    = playerWins && !isDraw;
-  const playerIsLoser = !playerWins && !isDraw;
+  const botIsLoser     = playerWins && !isDraw;
+  const playerIsLoser  = !playerWins && !isDraw;
+  const botIsWinner    = !playerWins && !isDraw;
+  const playerIsWinner = playerWins && !isDraw;
 
   return (
     <View style={foStyles.container}>
@@ -618,7 +633,9 @@ function FaceOffOverlay({ playerScore, botScore, snakeColor, prevStreak, onResta
             { justifyContent: 'flex-end' },
             botIsLoser
               ? { transform: [{ translateY: botSlide }, { scale: loserScale }], opacity: loserOpacity }
-              : { transform: [{ translateY: botSlide }] },
+              : botIsWinner
+                ? { transform: [{ translateY: botSlide }, { scale: winnerChomp }] }
+                : { transform: [{ translateY: botSlide }] },
           ]}
         >
           <Text style={foStyles.snakeLabel}>BOT</Text>
@@ -645,7 +662,9 @@ function FaceOffOverlay({ playerScore, botScore, snakeColor, prevStreak, onResta
             { justifyContent: 'flex-start' },
             playerIsLoser
               ? { transform: [{ translateY: playerSlide }, { scale: loserScale }], opacity: loserOpacity }
-              : { transform: [{ translateY: playerSlide }] },
+              : playerIsWinner
+                ? { transform: [{ translateY: playerSlide }, { scale: winnerChomp }] }
+                : { transform: [{ translateY: playerSlide }] },
           ]}
         >
           {renderSnakeColumn(snakeColor, false, playerScore)}
