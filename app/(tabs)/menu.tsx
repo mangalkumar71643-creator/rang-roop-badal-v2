@@ -27,20 +27,6 @@ const MODES = [
     icon: 'game-controller' as const,
     grad: ['#FF6B35', '#FF2D78'] as [string, string],
   },
-  {
-    id: 'endless' as const,
-    label: 'Endless',
-    desc: 'Play forever · How far can you go?',
-    icon: 'infinite' as const,
-    grad: ['#00D4FF', '#5E5CE6'] as [string, string],
-  },
-  {
-    id: 'challenge' as const,
-    label: 'Challenge',
-    desc: '60 seconds · Max score!',
-    icon: 'timer' as const,
-    grad: ['#FFD700', '#FF9500'] as [string, string],
-  },
 ];
 
 const SNAKE_SHIFT_MODE = {
