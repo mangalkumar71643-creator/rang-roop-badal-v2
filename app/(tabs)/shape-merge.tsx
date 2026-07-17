@@ -45,7 +45,7 @@ const TIERS: Tier[] = [
   { shape: 'Square',   color: '#5E5CE6', radius: 33 },
   { shape: 'Triangle', color: '#FF9500', radius: 41 },
   { shape: 'Star',     color: '#FFD700', radius: 50 },
-  { shape: 'Star',     color: '#FF3DF2', radius: 60 }, // MEGA — bigger, distinct glow
+  { shape: 'Star',     color: '#FF3DF2', radius: 53 }, // MEGA — distinct glow, only slightly bigger
 ];
 const MAX_TIER = TIERS.length - 1;
 
@@ -501,8 +501,8 @@ export default function ShapeMergeScreen() {
             {isMega && (
               <View style={{
                 position: 'absolute',
-                width: r * 2.6, height: r * 2.6, borderRadius: r * 1.3,
-                backgroundColor: TIERS[p.tier].color, opacity: 0.22,
+                width: r * 2, height: r * 2, borderRadius: r,
+                backgroundColor: TIERS[p.tier].color, opacity: 0.18,
               }} />
             )}
             <ShapeRenderer shape={TIERS[p.tier].shape} color={TIERS[p.tier].color} size={r * 2} />
