@@ -3,7 +3,7 @@
  * Physics-based drop game (Suika/watermelon-style) — no grid, no fixed
  * cells. Shapes fall freely under gravity and pile up naturally; two
  * touching shapes of the same tier merge into the next one in the chain:
- * Circle -> Hexagon -> Square -> Triangle -> Star -> MEGA burst bonus.
+ * Circle -> Hexagon -> Square -> Triangle -> Star -> MEGA -> burst bonus.
  * Merges can cascade in the same tick for combo bonuses.
  */
 
@@ -34,6 +34,8 @@ const { width: SW, height: SH } = Dimensions.get('window');
 const HIGH_SCORE_KEY = 'shapemerge';
 
 // ─── Merge chain: Circle -> Hexagon -> Square -> Triangle -> Star -> MEGA ──
+// Star + Star forms a MEGA piece (still a real shape on the board) instead
+// of vanishing; only MEGA + MEGA is the true terminal burst.
 interface Tier { shape: GameShape; color: string; radius: number }
 const TIERS: Tier[] = [
   { shape: 'Circle',   color: '#30D158', radius: 20 },
@@ -41,12 +43,17 @@ const TIERS: Tier[] = [
   { shape: 'Square',   color: '#5E5CE6', radius: 33 },
   { shape: 'Triangle', color: '#FF9500', radius: 41 },
   { shape: 'Star',     color: '#FFD700', radius: 50 },
+  { shape: 'Star',     color: '#FF3DF2', radius: 60 }, // MEGA — bigger, distinct glow
 ];
 const MAX_TIER = TIERS.length - 1;
 
-const MEGA_SCORE = 500;
-const MEGA_COINS = 10;
-const MEGA_STARS = 1;
+// Small bonus the instant a MEGA piece is formed (Star + Star).
+const MEGA_MILESTONE_COINS = 5;
+const MEGA_MILESTONE_STARS = 1;
+// Big payout when two MEGA pieces collide and the chain finally terminates.
+const TERMINAL_BURST_SCORE = 800;
+const TERMINAL_BURST_COINS = 15;
+const TERMINAL_BURST_STARS = 2;
 
 // ─── Physics ────────────────────────────────────────────────────────────────
 const TICK_MS = 16;
@@ -58,10 +65,9 @@ const H_DRAG = 0.90;
 const DROP_COOLDOWN_TICKS = 26;
 const DANGER_TICKS = 75; // ~1.2s sustained near the top ends the game
 
-// Shapes drop on their own every 2-3s, like a real falling-object game —
+// Shapes drop on their own every ~5s, like a real falling-object game —
 // dragging just repositions where the next one lands before it falls.
-const AUTO_DROP_MIN_TICKS = 125; // ~2.0s @ 16ms/tick
-const AUTO_DROP_MAX_TICKS = 188; // ~3.0s @ 16ms/tick
+const AUTO_DROP_TICKS = 313; // ~5.0s @ 16ms/tick
 
 const PAD = 14;
 const PLAY_W = SW - PAD * 2;
@@ -70,12 +76,17 @@ function tierScore(tier: number): number {
   return 20 * Math.pow(2, tier - 1);
 }
 
+// Circle and Hexagon spawn most often; Square shows up sometimes too —
+// higher tiers still mainly come from merging, not spawning.
 function randomSpawnTier(): number {
-  return Math.random() < 0.15 ? 1 : 0;
+  const r = Math.random();
+  if (r < 0.62) return 0; // Circle
+  if (r < 0.90) return 1; // Hexagon
+  return 2; // Square
 }
 
 function randomAutoDropTicks(): number {
-  return AUTO_DROP_MIN_TICKS + Math.floor(Math.random() * (AUTO_DROP_MAX_TICKS - AUTO_DROP_MIN_TICKS + 1));
+  return AUTO_DROP_TICKS;
 }
 
 interface PieceState { id: number; tier: number; x: number; y: number; vx: number; vy: number }
@@ -249,7 +260,8 @@ export default function ShapeMergeScreen() {
       const removeIdx = new Set<number>();
       const additions: PieceState[] = [];
       let scoreGained = 0;
-      let mega = false;
+      let terminalBurst = false;
+      let megaFormed = false;
 
       for (const [i, j] of mergePairs) {
         const a = pieces[i], b = pieces[j];
@@ -257,9 +269,11 @@ export default function ShapeMergeScreen() {
         const tier = a.tier;
         const mx = (a.x + b.x) / 2, my = (a.y + b.y) / 2;
         if (tier + 1 > MAX_TIER) {
-          mega = true;
-          scoreGained += MEGA_SCORE;
+          // Only MEGA + MEGA reaches here — the true end of the chain.
+          terminalBurst = true;
+          scoreGained += TERMINAL_BURST_SCORE;
         } else {
+          if (tier + 1 === MAX_TIER) megaFormed = true; // Star + Star -> MEGA
           additions.push({
             id: idRef.current++,
             tier: tier + 1,
@@ -277,22 +291,27 @@ export default function ShapeMergeScreen() {
 
       comboKeyRef.current += 1;
       setComboLabel({
-        text: mega ? 'MEGA BURST!' : mergePairs.length > 1 ? `COMBO x${mergePairs.length}` : 'MERGE!',
+        text: terminalBurst ? 'MEGA BURST!' : megaFormed ? 'MEGA FORMED!' : mergePairs.length > 1 ? `COMBO x${mergePairs.length}` : 'MERGE!',
         key: comboKeyRef.current,
       });
       setTimeout(() => setComboLabel(null), 650);
 
       if (Platform.OS !== 'web') {
-        if (mega) Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+        if (terminalBurst || megaFormed) Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
         else if (mergePairs.length >= 2) Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Heavy);
         else Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
       }
 
-      if (mega) {
-        addCoins(MEGA_COINS);
-        addStars(MEGA_STARS);
+      if (terminalBurst) {
+        addCoins(TERMINAL_BURST_COINS);
+        addStars(TERMINAL_BURST_STARS);
         flashOpacity.setValue(0.85);
         Animated.timing(flashOpacity, { toValue: 0, duration: 400, useNativeDriver: true }).start();
+      } else if (megaFormed) {
+        addCoins(MEGA_MILESTONE_COINS);
+        addStars(MEGA_MILESTONE_STARS);
+        flashOpacity.setValue(0.5);
+        Animated.timing(flashOpacity, { toValue: 0, duration: 350, useNativeDriver: true }).start();
       }
     }
 
@@ -462,6 +481,7 @@ export default function ShapeMergeScreen() {
       {/* Falling / settled pieces */}
       {w.pieces.map((p) => {
         const r = TIERS[p.tier].radius;
+        const isMega = p.tier === MAX_TIER - 1;
         return (
           <View
             key={p.id}
@@ -471,9 +491,18 @@ export default function ShapeMergeScreen() {
               top: geom.playTop + p.y - r,
               width: r * 2,
               height: r * 2,
+              alignItems: 'center',
+              justifyContent: 'center',
             }}
             pointerEvents="none"
           >
+            {isMega && (
+              <View style={{
+                position: 'absolute',
+                width: r * 2.6, height: r * 2.6, borderRadius: r * 1.3,
+                backgroundColor: TIERS[p.tier].color, opacity: 0.22,
+              }} />
+            )}
             <ShapeRenderer shape={TIERS[p.tier].shape} color={TIERS[p.tier].color} size={r * 2} />
           </View>
         );
