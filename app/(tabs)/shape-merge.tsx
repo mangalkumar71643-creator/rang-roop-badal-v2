@@ -23,6 +23,7 @@ import {
   View,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import Svg, { Circle } from 'react-native-svg';
 
 import { ShapeRenderer } from '@/components/ShapeRenderer';
 import { GameShape } from '@/constants/gameConfig';
@@ -57,6 +58,11 @@ const H_DRAG = 0.90;
 const DROP_COOLDOWN_TICKS = 26;
 const DANGER_TICKS = 75; // ~1.2s sustained near the top ends the game
 
+// Shapes drop on their own every 2-3s, like a real falling-object game —
+// dragging just repositions where the next one lands before it falls.
+const AUTO_DROP_MIN_TICKS = 125; // ~2.0s @ 16ms/tick
+const AUTO_DROP_MAX_TICKS = 188; // ~3.0s @ 16ms/tick
+
 const PAD = 14;
 const PLAY_W = SW - PAD * 2;
 
@@ -66,6 +72,10 @@ function tierScore(tier: number): number {
 
 function randomSpawnTier(): number {
   return Math.random() < 0.15 ? 1 : 0;
+}
+
+function randomAutoDropTicks(): number {
+  return AUTO_DROP_MIN_TICKS + Math.floor(Math.random() * (AUTO_DROP_MAX_TICKS - AUTO_DROP_MIN_TICKS + 1));
 }
 
 interface PieceState { id: number; tier: number; x: number; y: number; vx: number; vy: number }
@@ -81,9 +91,12 @@ interface World {
   bestChain: number;
   dangerTimer: number;
   dropCooldown: number;
+  autoDropTimer: number;
+  autoDropTotal: number;
 }
 
 function freshWorld(playW: number): World {
+  const autoDropTotal = randomAutoDropTicks();
   return {
     status: 'playing',
     pieces: [],
@@ -94,7 +107,27 @@ function freshWorld(playW: number): World {
     bestChain: 0,
     dangerTimer: 0,
     dropCooldown: 0,
+    autoDropTimer: autoDropTotal,
+    autoDropTotal,
   };
+}
+
+// Spawns the pending piece into the jar and lines up the next one. Shared by
+// the manual drag-release drop and the automatic timer-driven drop.
+function performDrop(w: World, idRef: { current: number }) {
+  w.pieces.push({
+    id: idRef.current++,
+    tier: w.pendingTier,
+    x: w.pendingX,
+    y: TIERS[w.pendingTier].radius + 2,
+    vx: 0,
+    vy: 0,
+  });
+  w.pendingTier = w.nextTier;
+  w.nextTier = randomSpawnTier();
+  w.dropCooldown = DROP_COOLDOWN_TICKS;
+  w.autoDropTotal = randomAutoDropTicks();
+  w.autoDropTimer = w.autoDropTotal;
 }
 
 export default function ShapeMergeScreen() {
@@ -145,6 +178,14 @@ export default function ShapeMergeScreen() {
     const pieces = w.pieces;
 
     if (w.dropCooldown > 0) w.dropCooldown--;
+
+    // Auto-drop: the pending shape falls on its own every 2-3s, just like
+    // a real falling-object game — dragging only aims where it lands.
+    w.autoDropTimer--;
+    if (w.autoDropTimer <= 0) {
+      performDrop(w, idRef);
+      if (Platform.OS !== 'web') Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    }
 
     // Integrate gravity + motion
     for (const p of pieces) {
@@ -289,17 +330,7 @@ export default function ShapeMergeScreen() {
   const dropPending = useCallback(() => {
     const w = worldRef.current;
     if (w.status !== 'playing' || w.dropCooldown > 0) return;
-    w.pieces.push({
-      id: idRef.current++,
-      tier: w.pendingTier,
-      x: w.pendingX,
-      y: TIERS[w.pendingTier].radius + 2,
-      vx: 0,
-      vy: 0,
-    });
-    w.pendingTier = w.nextTier;
-    w.nextTier = randomSpawnTier();
-    w.dropCooldown = DROP_COOLDOWN_TICKS;
+    performDrop(w, idRef);
     if (Platform.OS !== 'web') Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
     forceRender();
   }, [forceRender]);
@@ -383,6 +414,36 @@ export default function ShapeMergeScreen() {
         }]}
         pointerEvents="none"
       />
+
+      {/* Auto-drop countdown ring */}
+      {(() => {
+        const ringR = pendingR + 7;
+        const circumference = 2 * Math.PI * ringR;
+        const progress = Math.max(0, Math.min(1, w.autoDropTimer / w.autoDropTotal));
+        return (
+          <Svg
+            width={ringR * 2 + 6}
+            height={ringR * 2 + 6}
+            style={{
+              position: 'absolute',
+              left: geom.playLeft + w.pendingX - ringR - 3,
+              top: pendingY - ringR - 3,
+              transform: [{ rotate: '-90deg' }],
+            }}
+            pointerEvents="none"
+          >
+            <Circle
+              cx={ringR + 3} cy={ringR + 3} r={ringR}
+              stroke={progress < 0.25 ? '#FF2D78' : 'rgba(255,255,255,0.30)'}
+              strokeWidth={3}
+              fill="none"
+              strokeDasharray={`${circumference} ${circumference}`}
+              strokeDashoffset={circumference * (1 - progress)}
+              strokeLinecap="round"
+            />
+          </Svg>
+        );
+      })()}
 
       {/* Pending piece */}
       <View
