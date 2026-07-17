@@ -58,11 +58,11 @@ const TERMINAL_BURST_COINS = 15;
 const TERMINAL_BURST_STARS = 2;
 
 // ─── Win condition ──────────────────────────────────────────────────────────
-// Beat this score before the clock runs out. 2500 needs real strategy —
-// deliberately stacking same-tier shapes for cascades — not just passive
-// auto-drop clicking, which realistically only nets a few hundred points.
+// Beat this score before the clock runs out — needs real strategy,
+// deliberately stacking same-tier shapes for cascades, not just passive
+// auto-drop clicking.
 const MATCH_SECONDS = 300; // 5 minutes
-const TARGET_SCORE = 2500;
+const TARGET_SCORE = 10000;
 const WIN_BONUS_COINS = 50;
 const WIN_BONUS_STARS = 5;
 
