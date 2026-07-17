@@ -184,15 +184,15 @@ export default function GameScreen() {
   const CHARACTER_Y = SH - insets.bottom - 190 - SHAPE_BAR_HEIGHT;
   const COLLISION_Y = CHARACTER_Y - GATE_H / 2;
 
-  // Classic mode starts ~49% slower so players have more reaction time, but
-  // ramps up noticeably faster than the base curve — otherwise it stays
-  // near its starting speed for ~70 gates and never feels like it's building.
+  // Classic mode starts ~49% slower so players have more reaction time.
+  // Speed then steps up 5% (of the base speed) every 5 gates cleared, so
+  // the ramp is small and predictable instead of one long slow curve.
   const CLASSIC_SPEED_FACTOR = mode === 'classic' ? 0.508 : 1;
-  const CLASSIC_RAMP_BOOST = mode === 'classic' ? 2.5 : 1;
   const effectiveInitialSpeed = GAME_CONFIG.INITIAL_SPEED * CLASSIC_SPEED_FACTOR;
   const effectiveMaxSpeed = GAME_CONFIG.MAX_SPEED * CLASSIC_SPEED_FACTOR;
-  const effectiveSpeedIncrement = GAME_CONFIG.SPEED_INCREMENT * CLASSIC_SPEED_FACTOR * CLASSIC_RAMP_BOOST;
   const effectiveDangerSpeed = GAME_CONFIG.DANGER_SPEED * CLASSIC_SPEED_FACTOR;
+  const GATES_PER_SPEED_STEP = 5;
+  const SPEED_STEP_PCT = 0.05;
 
   const eng = useRef<Engine>({
     status: 'countdown',
@@ -287,7 +287,9 @@ export default function GameScreen() {
       e.combo++;
       e.maxCombo = Math.max(e.maxCombo, e.combo);
       e.gatesCleared++;
-      e.speed = Math.min(effectiveMaxSpeed, effectiveInitialSpeed + e.gatesCleared * effectiveSpeedIncrement);
+      // Every 5 gates cleared bumps speed by another 5% of the base speed.
+      const speedSteps = Math.floor(e.gatesCleared / GATES_PER_SPEED_STEP);
+      e.speed = Math.min(effectiveMaxSpeed, effectiveInitialSpeed * (1 + SPEED_STEP_PCT * speedSteps));
 
       const isStar = Math.random() < GAME_CONFIG.STAR_SHOWER_CHANCE;
       if (isStar) { e.score += GAME_CONFIG.STAR_SHOWER_BONUS; addStars(1); }
