@@ -184,11 +184,14 @@ export default function GameScreen() {
   const CHARACTER_Y = SH - insets.bottom - 190 - SHAPE_BAR_HEIGHT;
   const COLLISION_Y = CHARACTER_Y - GATE_H / 2;
 
-  // Classic mode runs ~49% slower so players have more reaction time
+  // Classic mode starts ~49% slower so players have more reaction time, but
+  // ramps up noticeably faster than the base curve — otherwise it stays
+  // near its starting speed for ~70 gates and never feels like it's building.
   const CLASSIC_SPEED_FACTOR = mode === 'classic' ? 0.508 : 1;
+  const CLASSIC_RAMP_BOOST = mode === 'classic' ? 2.5 : 1;
   const effectiveInitialSpeed = GAME_CONFIG.INITIAL_SPEED * CLASSIC_SPEED_FACTOR;
   const effectiveMaxSpeed = GAME_CONFIG.MAX_SPEED * CLASSIC_SPEED_FACTOR;
-  const effectiveSpeedIncrement = GAME_CONFIG.SPEED_INCREMENT * CLASSIC_SPEED_FACTOR;
+  const effectiveSpeedIncrement = GAME_CONFIG.SPEED_INCREMENT * CLASSIC_SPEED_FACTOR * CLASSIC_RAMP_BOOST;
   const effectiveDangerSpeed = GAME_CONFIG.DANGER_SPEED * CLASSIC_SPEED_FACTOR;
 
   const eng = useRef<Engine>({
