@@ -16,7 +16,6 @@ export default function GameLayout() {
       <Stack.Screen name="snake-shift" options={{ animation: 'none', gestureEnabled: false }} />
       <Stack.Screen name="shape-merge-levels" options={{ animation: 'slide_from_right' }} />
       <Stack.Screen name="shape-merge" options={{ animation: 'none', gestureEnabled: false }} />
-      <Stack.Screen name="bubble-shooter" options={{ animation: 'none', gestureEnabled: false }} />
     </Stack>
   );
 }

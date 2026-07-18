@@ -43,13 +43,6 @@ const SHAPE_MERGE_MODE = {
   grad: ['#FFD700', '#BF5AF2'] as [string, string],
 };
 
-const BUBBLE_SHOOTER_MODE = {
-  label: 'Bubble Shooter',
-  desc: 'Match 3 same shapes to blast',
-  icon: 'radio-button-on' as const,
-  grad: ['#00D4FF', '#5E5CE6'] as [string, string],
-};
-
 export default function MenuScreen() {
   const insets = useSafeAreaInsets();
   const colors = useColors();
@@ -88,10 +81,6 @@ export default function MenuScreen() {
 
   const handleShapeMerge = () => {
     router.push('/shape-merge-levels');
-  };
-
-  const handleBubbleShooter = () => {
-    router.push('/bubble-shooter');
   };
 
   return (
@@ -214,35 +203,6 @@ export default function MenuScreen() {
             {playerData.shapeMergeUnlockedLevel > 1 ? (
               <View style={styles.highScoreBadge}>
                 <Text style={styles.highScoreVal}>LVL {playerData.shapeMergeUnlockedLevel}</Text>
-              </View>
-            ) : (
-              <View style={styles.newBadge}>
-                <Text style={styles.newBadgeText}>NEW</Text>
-              </View>
-            )}
-            <Ionicons name="chevron-forward" size={20} color="rgba(255,255,255,0.6)" />
-          </LinearGradient>
-        </Pressable>
-
-        {/* Bubble Shooter */}
-        <Pressable
-          onPress={handleBubbleShooter}
-          style={({ pressed }) => [styles.modeCard, pressed && styles.modeCardPressed]}
-        >
-          <LinearGradient
-            colors={BUBBLE_SHOOTER_MODE.grad}
-            start={{ x: 0, y: 0 }}
-            end={{ x: 1, y: 1 }}
-            style={styles.modeGrad}
-          >
-            <Ionicons name={BUBBLE_SHOOTER_MODE.icon} size={28} color="#FFFFFF" />
-            <View style={styles.modeText}>
-              <Text style={styles.modeLabel}>{BUBBLE_SHOOTER_MODE.label}</Text>
-              <Text style={styles.modeDesc}>{BUBBLE_SHOOTER_MODE.desc}</Text>
-            </View>
-            {playerData.highScores.bubbleshooter ? (
-              <View style={styles.highScoreBadge}>
-                <Text style={styles.highScoreVal}>{playerData.highScores.bubbleshooter}</Text>
               </View>
             ) : (
               <View style={styles.newBadge}>
