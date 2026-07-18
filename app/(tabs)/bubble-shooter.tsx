@@ -199,6 +199,46 @@ function isGridEmpty(grid: Grid): boolean {
   return true;
 }
 
+// Traces the aim trajectory (in local play-area coordinates) including
+// wall bounces, up to maxLen or the ceiling — used to draw an accurate
+// dotted aim guide instead of a short fixed-length stub.
+function traceAimPath(startX: number, startY: number, angle: number, maxLen: number): { x: number; y: number }[] {
+  let x = startX, y = startY;
+  let vx = Math.cos(angle), vy = Math.sin(angle);
+  const points = [{ x, y }];
+  let remaining = maxLen;
+  let bounces = 0;
+  while (remaining > 0 && bounces < 4) {
+    const tWallX = vx < 0 ? (BUBBLE_R - x) / vx : vx > 0 ? (PLAY_W - BUBBLE_R - x) / vx : Infinity;
+    const tCeil = vy < 0 ? (0 - y) / vy : Infinity;
+    const t = Math.min(tWallX, tCeil, remaining);
+    if (!Number.isFinite(t) || t <= 0) break;
+    x += vx * t;
+    y += vy * t;
+    points.push({ x, y });
+    remaining -= t;
+    if (t === tCeil || remaining <= 0.01) break;
+    vx = -vx;
+    bounces++;
+  }
+  return points;
+}
+
+function sampleDots(points: { x: number; y: number }[], spacing: number): { x: number; y: number }[] {
+  const dots: { x: number; y: number }[] = [];
+  for (let i = 0; i < points.length - 1; i++) {
+    const a = points[i], b = points[i + 1];
+    const segLen = Math.hypot(b.x - a.x, b.y - a.y);
+    if (segLen < 0.01) continue;
+    const steps = Math.floor(segLen / spacing);
+    for (let s = 1; s <= steps; s++) {
+      const t = (s * spacing) / segLen;
+      dots.push({ x: a.x + (b.x - a.x) * t, y: a.y + (b.y - a.y) * t });
+    }
+  }
+  return dots;
+}
+
 // Shifts every row down one and inserts a fresh row at the top. Returns
 // true if that pushed any bubble into the danger zone (game over).
 function performDescent(grid: Grid): boolean {
@@ -409,9 +449,9 @@ export default function BubbleShooterScreen() {
   const bestScore = playerData.highScores[HIGH_SCORE_KEY] ?? 0;
   const cannonX = geom.playLeft + PLAY_W / 2;
   const cannonY = geom.playTop + geom.cannonY;
-  const aimLen = 46;
-  const aimTipX = cannonX + Math.cos(w.aimAngle) * aimLen;
-  const aimTipY = cannonY + Math.sin(w.aimAngle) * aimLen;
+  const aimDots = w.status === 'aiming'
+    ? sampleDots(traceAimPath(PLAY_W / 2, geom.cannonY, w.aimAngle, 480), 16)
+    : [];
 
   return (
     <View style={styles.root}>
@@ -440,7 +480,7 @@ export default function BubbleShooterScreen() {
       </View>
 
       {bestScore > 0 && (
-        <Text style={styles.bestLine} pointerEvents="none">BEST {bestScore}</Text>
+        <Text style={[styles.bestLine, { top: insets.top + 58 }]} pointerEvents="none">BEST {bestScore}</Text>
       )}
 
       {comboLabel && (
@@ -448,6 +488,19 @@ export default function BubbleShooterScreen() {
           <Text style={styles.comboText}>{comboLabel.text}</Text>
         </View>
       )}
+
+      {/* Aim guide — dotted trajectory with wall-bounce preview */}
+      {aimDots.map((d, i) => (
+        <View
+          key={`aim${i}`}
+          style={[styles.aimDot, {
+            left: geom.playLeft + d.x - 2,
+            top: geom.playTop + d.y - 2,
+            opacity: Math.max(0.15, 0.6 - i * 0.02),
+          }]}
+          pointerEvents="none"
+        />
+      ))}
 
       {/* Grid area */}
       <View
@@ -470,24 +523,6 @@ export default function BubbleShooterScreen() {
           })
         )}
       </View>
-
-      {/* Aim guide */}
-      {w.status === 'aiming' && (
-        <View pointerEvents="none">
-          <View
-            style={[styles.aimDot, {
-              left: (cannonX + aimTipX) / 2 - 2,
-              top: (cannonY + aimTipY) / 2 - 2,
-            }]}
-          />
-          <View
-            style={[styles.aimDot, {
-              left: aimTipX - 2,
-              top: aimTipY - 2,
-            }]}
-          />
-        </View>
-      )}
 
       {/* Flying bubble */}
       {w.flying && (
@@ -579,8 +614,9 @@ const styles = StyleSheet.create({
   },
   nextLabel: { fontSize: 8, fontFamily: 'Inter_600SemiBold', color: '#5555AA', letterSpacing: 1 },
   bestLine: {
+    position: 'absolute', left: 0, right: 0,
     textAlign: 'center', fontSize: 11, fontFamily: 'Inter_500Medium',
-    color: '#5555AA', letterSpacing: 1, marginTop: -4, marginBottom: 4,
+    color: '#5555AA', letterSpacing: 1,
   },
 
   comboWrap: {
