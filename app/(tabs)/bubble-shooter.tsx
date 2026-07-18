@@ -101,7 +101,11 @@ function fillInitialRows(grid: Grid) {
 }
 
 interface Flying { id: number; shape: GameShape; x: number; y: number; vx: number; vy: number }
-type GStatus = 'aiming' | 'flying' | 'win' | 'gameover';
+// 'aiming' covers the whole active game, including while a shot is
+// mid-flight — aiming the next shot is never blocked, only actually
+// firing is (gated on world.flying being null). This keeps the cannon
+// and aim guide always responsive instead of freezing during flight.
+type GStatus = 'aiming' | 'win' | 'gameover';
 
 interface World {
   status: GStatus;
@@ -353,16 +357,13 @@ export default function BubbleShooterScreen() {
       if (overflowed) { endGame(); return; }
     }
 
-    w.currentShape = w.nextShape;
-    w.nextShape = randomShape();
-    w.status = 'aiming';
     w.flying = null;
   }, [winGame, endGame, flashOpacity]);
 
   const tickFnRef = useRef<() => void>(() => {});
   tickFnRef.current = () => {
     const w = worldRef.current;
-    if (w.status !== 'flying' || !w.flying) return;
+    if (w.status !== 'aiming' || !w.flying) return;
     const f = w.flying;
 
     f.x += f.vx;
@@ -413,8 +414,9 @@ export default function BubbleShooterScreen() {
 
   const fire = useCallback(() => {
     const w = worldRef.current;
-    if (w.status !== 'aiming') return;
-    w.status = 'flying';
+    // Aiming stays live during flight; only block launching a second
+    // shot while one is already in the air.
+    if (w.status !== 'aiming' || w.flying) return;
     w.flying = {
       id: idRef.current++,
       shape: w.currentShape,
@@ -423,6 +425,10 @@ export default function BubbleShooterScreen() {
       vx: Math.cos(w.aimAngle) * FIRE_SPEED,
       vy: Math.sin(w.aimAngle) * FIRE_SPEED,
     };
+    // Load the next shape into the cannon immediately, not after the
+    // shot lands — so the player is never aiming with a stale shape.
+    w.currentShape = w.nextShape;
+    w.nextShape = randomShape();
     if (Platform.OS !== 'web') Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
     forceRender();
   }, [geom.cannonY, forceRender]);
