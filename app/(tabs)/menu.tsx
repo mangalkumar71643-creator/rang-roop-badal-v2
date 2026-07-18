@@ -80,7 +80,7 @@ export default function MenuScreen() {
   };
 
   const handleShapeMerge = () => {
-    router.push('/shape-merge');
+    router.push('/shape-merge-levels');
   };
 
   return (
@@ -200,9 +200,9 @@ export default function MenuScreen() {
               <Text style={styles.modeLabel}>{SHAPE_MERGE_MODE.label}</Text>
               <Text style={styles.modeDesc}>{SHAPE_MERGE_MODE.desc}</Text>
             </View>
-            {playerData.highScores.shapemerge ? (
+            {playerData.shapeMergeUnlockedLevel > 1 ? (
               <View style={styles.highScoreBadge}>
-                <Text style={styles.highScoreVal}>{playerData.highScores.shapemerge}</Text>
+                <Text style={styles.highScoreVal}>LVL {playerData.shapeMergeUnlockedLevel}</Text>
               </View>
             ) : (
               <View style={styles.newBadge}>

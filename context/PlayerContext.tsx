@@ -30,6 +30,7 @@ interface PlayerData {
   dailyRewardLastClaimed: string;
   totalGamesPlayed: number;
   snakeWinStreak: number;
+  shapeMergeUnlockedLevel: number;
 }
 
 const DEFAULT_DATA: PlayerData = {
@@ -47,6 +48,7 @@ const DEFAULT_DATA: PlayerData = {
   dailyRewardLastClaimed: '',
   totalGamesPlayed: 0,
   snakeWinStreak: 0,
+  shapeMergeUnlockedLevel: 1,
 };
 
 interface PlayerContextValue {
@@ -66,6 +68,7 @@ interface PlayerContextValue {
   resetData: () => void;
   incrementGamesPlayed: () => void;
   updateSnakeWinStreak: (won: boolean) => number;
+  unlockShapeMergeLevel: (level: number) => void;
 }
 
 const PlayerContext = createContext<PlayerContextValue | null>(null);
@@ -286,6 +289,13 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
     return newStreak;
   }, []);
 
+  const unlockShapeMergeLevel = useCallback((level: number) => {
+    setPlayerData((prev) => ({
+      ...prev,
+      shapeMergeUnlockedLevel: Math.max(prev.shapeMergeUnlockedLevel, level),
+    }));
+  }, []);
+
   return (
     <PlayerContext.Provider
       value={{
@@ -305,6 +315,7 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
         resetData,
         incrementGamesPlayed,
         updateSnakeWinStreak,
+        unlockShapeMergeLevel,
       }}
     >
       {children}

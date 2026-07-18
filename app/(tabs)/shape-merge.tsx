@@ -10,7 +10,7 @@
 import { Ionicons } from '@expo/vector-icons';
 import * as Haptics from 'expo-haptics';
 import { LinearGradient } from 'expo-linear-gradient';
-import { router } from 'expo-router';
+import { router, useLocalSearchParams } from 'expo-router';
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   Animated,
@@ -27,11 +27,10 @@ import Svg, { Circle } from 'react-native-svg';
 
 import { ShapeRenderer } from '@/components/ShapeRenderer';
 import { GameShape } from '@/constants/gameConfig';
+import { getShapeMergeLevel } from '@/constants/shapeMergeLevels';
 import { usePlayer } from '@/context/PlayerContext';
 
 const { width: SW, height: SH } = Dimensions.get('window');
-
-const HIGH_SCORE_KEY = 'shapemerge';
 
 // ─── Merge chain: Circle -> Hexagon -> Square -> Triangle -> Star -> MEGA ──
 // Star + Star forms a MEGA piece (still a real shape on the board) instead
@@ -58,11 +57,7 @@ const TERMINAL_BURST_COINS = 15;
 const TERMINAL_BURST_STARS = 2;
 
 // ─── Win condition ──────────────────────────────────────────────────────────
-// Beat this score before the clock runs out — needs real strategy,
-// deliberately stacking same-tier shapes for cascades, not just passive
-// auto-drop clicking.
-const MATCH_SECONDS = 300; // 5 minutes
-const TARGET_SCORE = 10000;
+// Per-level time limit + target score come from getShapeMergeLevel().
 const WIN_BONUS_COINS = 50;
 const WIN_BONUS_STARS = 5;
 
@@ -126,7 +121,7 @@ interface World {
   timeLeft: number;
 }
 
-function freshWorld(playW: number): World {
+function freshWorld(playW: number, matchSeconds: number): World {
   const autoDropTotal = randomAutoDropTicks();
   return {
     status: 'playing',
@@ -141,7 +136,7 @@ function freshWorld(playW: number): World {
     dropCooldown: 0,
     autoDropTimer: autoDropTotal,
     autoDropTotal,
-    timeLeft: MATCH_SECONDS,
+    timeLeft: matchSeconds,
   };
 }
 
@@ -165,7 +160,14 @@ function performDrop(w: World, idRef: { current: number }) {
 
 export default function ShapeMergeScreen() {
   const insets = useSafeAreaInsets();
-  const { playerData, updateHighScore, addCoins, addStars, incrementGamesPlayed } = usePlayer();
+  const { playerData, updateHighScore, addCoins, addStars, incrementGamesPlayed, unlockShapeMergeLevel } = usePlayer();
+
+  const params = useLocalSearchParams<{ level?: string }>();
+  const level = Math.max(1, parseInt(params.level ?? '1', 10) || 1);
+  const levelConfig = useMemo(() => getShapeMergeLevel(level), [level]);
+  const MATCH_SECONDS = levelConfig.seconds;
+  const TARGET_SCORE = levelConfig.target;
+  const HIGH_SCORE_KEY = `shapemerge_L${level}`;
 
   // Geometry computed once from safe-area insets (stable after first render).
   const geom = useMemo(() => {
@@ -178,7 +180,7 @@ export default function ShapeMergeScreen() {
   const [tick, setTick] = useState(0);
   const forceRender = useCallback(() => setTick((t) => t + 1), []);
 
-  const worldRef = useRef<World>(freshWorld(PLAY_W));
+  const worldRef = useRef<World>(freshWorld(PLAY_W, MATCH_SECONDS));
   const idRef = useRef(1);
   const gameLoopRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -203,7 +205,7 @@ export default function ShapeMergeScreen() {
     if (coinsEarned > 0) addCoins(coinsEarned);
     if (starsEarned > 0) addStars(starsEarned);
     forceRender();
-  }, [stopLoop, incrementGamesPlayed, updateHighScore, addCoins, addStars, forceRender]);
+  }, [stopLoop, incrementGamesPlayed, updateHighScore, addCoins, addStars, forceRender, HIGH_SCORE_KEY]);
 
   const winGame = useCallback(() => {
     const w = worldRef.current;
@@ -211,13 +213,14 @@ export default function ShapeMergeScreen() {
     stopLoop();
     incrementGamesPlayed();
     updateHighScore(HIGH_SCORE_KEY, w.score);
+    unlockShapeMergeLevel(level + 1);
     const coinsEarned = Math.floor(w.score / 15) + WIN_BONUS_COINS;
     const starsEarned = (w.bestChain >= 2 ? Math.min(w.bestChain - 1, 3) : 0) + WIN_BONUS_STARS;
     addCoins(coinsEarned);
     addStars(starsEarned);
     if (Platform.OS !== 'web') Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
     forceRender();
-  }, [stopLoop, incrementGamesPlayed, updateHighScore, addCoins, addStars, forceRender]);
+  }, [stopLoop, incrementGamesPlayed, updateHighScore, addCoins, addStars, forceRender, HIGH_SCORE_KEY, unlockShapeMergeLevel, level]);
 
   // ─── Physics tick ──────────────────────────────────────────────────────────
   const tickFnRef = useRef<() => void>(() => {});
@@ -385,9 +388,13 @@ export default function ShapeMergeScreen() {
   }, [endGame, forceRender]);
 
   useEffect(() => {
+    // Re-init on level change too, in case the navigator reuses this screen
+    // instance for the "next level" push instead of mounting a fresh one.
+    worldRef.current = freshWorld(PLAY_W, MATCH_SECONDS);
     startLoops();
+    forceRender();
     return () => stopLoop();
-  }, [startLoops, stopLoop]);
+  }, [level, MATCH_SECONDS, startLoops, stopLoop, forceRender]);
 
   // ─── Touch control: drag to aim, release to drop ───────────────────────────
   const updatePendingX = useCallback((pageX: number) => {
@@ -418,11 +425,16 @@ export default function ShapeMergeScreen() {
 
   const restart = useCallback(() => {
     stopLoop();
-    worldRef.current = freshWorld(PLAY_W);
+    worldRef.current = freshWorld(PLAY_W, MATCH_SECONDS);
     startLoops();
     forceRender();
-  }, [stopLoop, startLoops, forceRender]);
+  }, [stopLoop, startLoops, forceRender, MATCH_SECONDS]);
 
+  const goToLevelSelect = useCallback(() => { stopLoop(); router.replace('/shape-merge-levels'); }, [stopLoop]);
+  const goToNextLevel = useCallback(() => {
+    stopLoop();
+    router.replace({ pathname: '/shape-merge', params: { level: String(level + 1) } });
+  }, [stopLoop, level]);
   const goHome = useCallback(() => { stopLoop(); router.replace('/menu'); }, [stopLoop]);
 
   const w = worldRef.current;
@@ -449,7 +461,7 @@ export default function ShapeMergeScreen() {
           <Ionicons name="home-outline" size={16} color="rgba(255,255,255,0.55)" />
         </TouchableOpacity>
         <View style={styles.hudCenter}>
-          <Text style={styles.modeLabel}>SHAPE MERGE</Text>
+          <Text style={styles.modeLabel}>SHAPE MERGE · LVL {level}</Text>
           <Text style={styles.scoreNum}>{w.score}</Text>
         </View>
         <View style={styles.nextBadge}>
@@ -579,16 +591,17 @@ export default function ShapeMergeScreen() {
       {/* Win overlay */}
       {w.status === 'win' && (
         <View style={[StyleSheet.absoluteFill, styles.dimOverlay]}>
+          <Text style={styles.levelTag}>LEVEL {level} CLEARED</Text>
           <Text style={[styles.overlayTitle, styles.winTitle]}>TARGET HIT!</Text>
           <Text style={[styles.finalScore, styles.winScore]}>{w.score}</Text>
           <Text style={styles.bestScoreText}>+{WIN_BONUS_COINS} 🪙  +{WIN_BONUS_STARS} ⭐ BONUS</Text>
-          <TouchableOpacity style={styles.primaryBtn} onPress={restart}>
-            <Ionicons name="refresh" size={20} color="#070714" />
-            <Text style={styles.primaryBtnText}>PLAY AGAIN</Text>
+          <TouchableOpacity style={styles.primaryBtn} onPress={goToNextLevel}>
+            <Ionicons name="arrow-forward" size={20} color="#070714" />
+            <Text style={styles.primaryBtnText}>NEXT LEVEL</Text>
           </TouchableOpacity>
-          <TouchableOpacity style={styles.secondaryBtn} onPress={goHome}>
-            <Ionicons name="home-outline" size={18} color="#FFFFFF" />
-            <Text style={styles.secondaryBtnText}>MAIN MENU</Text>
+          <TouchableOpacity style={styles.secondaryBtn} onPress={goToLevelSelect}>
+            <Ionicons name="grid-outline" size={18} color="#FFFFFF" />
+            <Text style={styles.secondaryBtnText}>LEVEL SELECT</Text>
           </TouchableOpacity>
         </View>
       )}
@@ -596,6 +609,7 @@ export default function ShapeMergeScreen() {
       {/* Game over overlay */}
       {w.status === 'gameover' && (
         <View style={[StyleSheet.absoluteFill, styles.dimOverlay]}>
+          <Text style={styles.levelTag}>LEVEL {level}</Text>
           <Text style={styles.overlayTitle}>{w.endReason === 'time' ? "TIME'S UP!" : 'JAR FULL!'}</Text>
           <Text style={styles.finalScore}>{w.score}</Text>
           <Text style={styles.bestScoreText}>TARGET WAS {TARGET_SCORE}</Text>
@@ -604,9 +618,9 @@ export default function ShapeMergeScreen() {
             <Ionicons name="refresh" size={20} color="#070714" />
             <Text style={styles.primaryBtnText}>TRY AGAIN</Text>
           </TouchableOpacity>
-          <TouchableOpacity style={styles.secondaryBtn} onPress={goHome}>
-            <Ionicons name="home-outline" size={18} color="#FFFFFF" />
-            <Text style={styles.secondaryBtnText}>MAIN MENU</Text>
+          <TouchableOpacity style={styles.secondaryBtn} onPress={goToLevelSelect}>
+            <Ionicons name="grid-outline" size={18} color="#FFFFFF" />
+            <Text style={styles.secondaryBtnText}>LEVEL SELECT</Text>
           </TouchableOpacity>
         </View>
       )}
@@ -698,6 +712,10 @@ const styles = StyleSheet.create({
   dimOverlay: {
     backgroundColor: 'rgba(5,5,18,0.93)', alignItems: 'center', justifyContent: 'center',
     gap: 14, zIndex: 50,
+  },
+  levelTag: {
+    fontSize: 11, fontFamily: 'Inter_700Bold', color: '#5E5CE6',
+    letterSpacing: 2, marginBottom: -6,
   },
   overlayTitle: { fontSize: 28, fontFamily: 'Inter_700Bold', color: '#FFFFFF', letterSpacing: 3 },
   winTitle: {
